@@ -438,6 +438,11 @@ function App() {
     try {
       const url = `/api/sheet?gid=${POSITIVE_MESSAGES_GID}`;
       const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error fetching messages: ${response.status}`);
+      }
+
       let csvText = await response.text();
       csvText = csvText.replace(/^\uFEFF/, '');
       const rows = parseCSV(csvText);
@@ -466,9 +471,26 @@ function App() {
 
         setMsgPools(pools);
         setEmojiPool(poolE);
+
+        try {
+          localStorage.setItem('social-tracker-messages-cache-v3', JSON.stringify({ pools, poolE }));
+        } catch { /* ignore cache quota limits */ }
       }
     } catch (err) {
-      console.error('Failed to fetch positive messages:', err);
+      console.error('Failed to fetch positive messages API, attempting to load from cache...', err);
+      try {
+        const cached = localStorage.getItem('social-tracker-messages-cache-v3');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed.pools) setMsgPools(parsed.pools);
+          if (parsed.poolE) setEmojiPool(parsed.poolE);
+          console.log('Positive messages loaded from offline cache due to API error.');
+        } else {
+          console.log('No offline cache found for positive messages.');
+        }
+      } catch (cacheErr) {
+        console.error('Failed to parse message cache.', cacheErr);
+      }
     }
   }, [parseCSV]);
 
