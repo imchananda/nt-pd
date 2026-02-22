@@ -82,7 +82,7 @@ export const translations = {
 
         // Usage Tips per platform
         igTip1: '📝 คัดลอกข้อความ → ใส่ใน Comment IG',
-        igTip2: '📸 คัดลอกข้อความ + # → สร้างโพสต์ / Reel',
+        igTip2: '📸 คัดลอกข้อความ + # → สร้างโพสต์ / Reels',
         igTip3: '#️⃣ คัดลอก # เท่านั้น → ใส่ใน Stories',
         xTip1: '✍️ ข้อความ / # / ข้อความ+# → Reply หรือสร้างโพสต์บน X',
         ttTip1: '📝 คัดลอกข้อความ → ใส่ใน Comment TikTok',
@@ -141,7 +141,7 @@ export const translations = {
         view: 'ชม',
 
         // Platforms
-        igLabel: 'Instagram/reels',
+        igLabel: 'Instagram/Reels',
         ttLabel: 'TikTok',
         xLabel: 'X',
         fbLabel: 'Facebook',
@@ -228,7 +228,7 @@ export const translations = {
 
         // Usage Tips per platform
         igTip1: '📝 Copy message → paste as IG Comment',
-        igTip2: '📸 Copy message + # → create Post / Reel',
+        igTip2: '📸 Copy message + # → create Post / Reels',
         igTip3: '#️⃣ Copy # only → paste in Stories',
         xTip1: '✍️ Message / # / Message+# → Reply or Post on X',
         ttTip1: '📝 Copy message → paste as TikTok Comment',
@@ -287,7 +287,7 @@ export const translations = {
         view: 'View',
 
         // Platforms
-        igLabel: 'Instagram/reels',
+        igLabel: 'Instagram/Reels',
         ttLabel: 'TikTok',
         xLabel: 'X',
         fbLabel: 'Facebook',
