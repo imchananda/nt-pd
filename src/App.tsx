@@ -112,15 +112,13 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [generatedMessage, setGeneratedMessage] = useState<string>('');
   const [copiedType, setCopiedType] = useState<'message' | 'hashtags' | 'both' | null>(null);
 
   // Positive messages state — 3 independent pools
   const [msgPool1, setMsgPool1] = useState<string[]>([]);
   const [msgPool2, setMsgPool2] = useState<string[]>([]);
   const [emojiPool, setEmojiPool] = useState<string[]>([]);
-  const [generatedMessage, setGeneratedMessage] = useState<string>('');
-
   const [completed, setCompleted] = useState<Record<string, CompletedState>>(() => {
     try {
       const saved = localStorage.getItem('social-tracker-completed-v3');
@@ -534,18 +532,6 @@ function App() {
       await navigator.clipboard.writeText(text);
       setCopiedType('both');
       setTimeout(() => setCopiedType(null), 2000);
-    } catch (err) {
-      console.error('Copy failed:', err);
-    }
-  };
-
-  // Legacy copy function (keeping for compatibility)
-  const handleCopy = async (task: Task) => {
-    const text = getCaption(task);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Copy failed:', err);
     }
