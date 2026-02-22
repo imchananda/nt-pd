@@ -709,7 +709,7 @@ function App() {
                 </div>
 
                 <div className="mt-1">
-                  <span className="text-base font-display font-bold uppercase tracking-wider text-prada-charcoal/90">
+                  <span className="text-lg sm:text-xl font-display font-bold uppercase tracking-widest text-gray-800">
                     Namtan Tipnaree
                   </span>
                 </div>
@@ -1067,55 +1067,53 @@ function App() {
       <footer className="relative z-40 flex-shrink-0 bg-transparent pt-2 pb-2">
         <div className="max-w-lg mx-auto relative px-4">
           {/* Stats Bar */}
-          <div className="bg-prada-charcoal/95 backdrop-blur-xl rounded-full px-5 py-2.5 flex items-center justify-between shadow-xl border border-prada-charcoal/50">
-            <div className="flex items-center gap-4 sm:gap-6">
-              <button
-                onClick={() => setShowPlatformSummaryModal(true)}
-                className="flex items-center gap-1.5 pr-1 hover:opacity-70 transition-opacity"
-              >
-                <span className="text-[12px] font-bold text-white whitespace-nowrap">✦ {t('summary')}</span>
-              </button>
+          <div className="bg-prada-charcoal/95 backdrop-blur-xl rounded-full px-5 py-2.5 flex items-center justify-between shadow-xl border border-prada-charcoal/50 w-full">
+            <button
+              onClick={() => setShowPlatformSummaryModal(true)}
+              className="flex items-center gap-1.5 hover:opacity-70 transition-opacity flex-shrink-0"
+            >
+              <span className="text-[12px] font-bold text-white whitespace-nowrap">✦ {t('summary')}</span>
+            </button>
 
-              <div className="w-px h-6 bg-white/10" />
+            <div className="w-px h-6 bg-white/10" />
 
-              <div className="flex flex-col items-center min-w-[45px]">
-                <div className="text-[11px] font-bold text-prada-cream flex items-baseline leading-none mb-0.5 whitespace-nowrap">
-                  {pendingCount} <span className="text-[9px] font-normal opacity-60 ml-1">/ {totalTasksList.length}</span>
-                </div>
-                <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest whitespace-nowrap leading-none">{t('pending')}</div>
+            <div className="flex flex-col items-center min-w-[45px]">
+              <div className="text-[11px] font-bold text-prada-cream flex items-baseline leading-none mb-0.5 whitespace-nowrap">
+                {pendingCount} <span className="text-[9px] font-normal opacity-60 ml-1">/ {totalTasksList.length}</span>
               </div>
-
-              <div className="w-px h-6 bg-white/10" />
-
-              <div className="flex flex-col items-center min-w-[45px]">
-                <div className="text-[13px] font-bold text-white shadow-sm leading-none mb-0.5">
-                  {completedCount}
-                </div>
-                <div className="text-[7.5px] text-prada-cream/80 uppercase tracking-widest whitespace-nowrap leading-none">{t('done')}</div>
-              </div>
+              <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest whitespace-nowrap leading-none">{t('pending')}</div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="flex flex-col items-center min-w-[40px]">
-                <div className="text-[13px] font-bold text-white leading-none mb-0.5">
-                  {totalTasksList.length ? Math.round((totalCompletedCount / totalTasksList.length) * 100) : 0}%
-                </div>
-                <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest leading-none">{t('totalLabel')}</div>
+            <div className="w-px h-6 bg-white/10" />
+
+            <div className="flex flex-col items-center min-w-[45px]">
+              <div className="text-[13px] font-bold text-white shadow-sm leading-none mb-0.5">
+                {completedCount}
               </div>
-
-              <div className="w-px h-6 bg-white/10" />
-
-              {/* Refresh Button */}
-              <button
-                onClick={() => fetchAllData(true)}
-                disabled={refreshing}
-                className={`p-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 transition-all ${refreshing ? 'animate-spin opacity-50' : ''}`}
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-3.5 h-3.5 text-white">
-                  <path d="M4 4v5h5M20 20v-5h-5M20 9A9 9 0 0 0 5.64 5.64L4 9M4 15a9 9 0 0 0 14.36 3.36L20 15" />
-                </svg>
-              </button>
+              <div className="text-[7.5px] text-prada-cream/80 uppercase tracking-widest whitespace-nowrap leading-none">{t('done')}</div>
             </div>
+
+            <div className="w-px h-6 bg-white/10" />
+
+            <div className="flex flex-col items-center min-w-[45px]">
+              <div className="text-[13px] font-bold text-white leading-none mb-0.5">
+                {totalTasksList.length ? Math.round((totalCompletedCount / totalTasksList.length) * 100) : 0}%
+              </div>
+              <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest leading-none">{t('totalLabel')}</div>
+            </div>
+
+            <div className="w-px h-6 bg-white/10" />
+
+            {/* Refresh Button */}
+            <button
+              onClick={() => fetchAllData(true)}
+              disabled={refreshing}
+              className={`flex-shrink-0 p-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 transition-all ${refreshing ? 'animate-spin opacity-50' : ''}`}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-3.5 h-3.5 text-white">
+                <path d="M4 4v5h5M20 20v-5h-5M20 9A9 9 0 0 0 5.64 5.64L4 9M4 15a9 9 0 0 0 14.36 3.36L20 15" />
+              </svg>
+            </button>
           </div>
         </div>
       </footer>
