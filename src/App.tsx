@@ -540,7 +540,7 @@ function App() {
 
   // Generate random positive message — 2-step: pick from each pool, then pick 1 of 4 patterns
   const generateRandomMessage = useCallback(() => {
-    const activePool = msgPools[language] || msgPools.en;
+    const activePool = msgPools[language]?.p1?.length ? msgPools[language] : msgPools.en;
     if (activePool.p1.length === 0 || activePool.p2.length === 0 || emojiPool.length === 0) return;
     const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
     const m1 = pick(activePool.p1);
@@ -1423,7 +1423,7 @@ function App() {
           const platform = selectedTask.platform;
           const isFacebook = platform === 'facebook';
           const hasHashtags = !!selectedTask.hashtags && !isFacebook;
-          const activePool = msgPools[language] || msgPools.en;
+          const activePool = msgPools[language]?.p1?.length ? msgPools[language] : msgPools.en;
           const msgReady = activePool.p1.length > 0 && activePool.p2.length > 0 && emojiPool.length > 0;
 
           // Per-platform usage tips
