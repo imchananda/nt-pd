@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLanguage } from './i18n/LanguageContext';
 import AchievementPopup, { AchievementFloatingButton } from './components/AchievementPopup';
 
@@ -115,9 +115,11 @@ function App() {
   const [generatedMessage, setGeneratedMessage] = useState<string>('');
   const [copiedType, setCopiedType] = useState<'message' | 'hashtags' | 'both' | null>(null);
 
-  // Positive messages state — 3 independent pools
-  const [msgPool1, setMsgPool1] = useState<string[]>([]);
-  const [msgPool2, setMsgPool2] = useState<string[]>([]);
+  // Positive messages state — organized by language
+  const [msgPools, setMsgPools] = useState<Record<string, { p1: string[], p2: string[] }>>({
+    en: { p1: [], p2: [] },
+    th: { p1: [], p2: [] }
+  });
   const [emojiPool, setEmojiPool] = useState<string[]>([]);
   const [completed, setCompleted] = useState<Record<string, CompletedState>>(() => {
     try {
@@ -230,6 +232,31 @@ function App() {
     };
   }, [totalTasksList, statsPeriod]);
 
+  // Memoize global stats to prevent recalculation on every render (e.g. during scroll)
+  const dashboardStats = useMemo(() => getPlatformStats(), [getPlatformStats]);
+
+  // Memoize platform-specific stats for the modal
+  const platformStatsMap = useMemo(() => {
+    const map: Record<string, ReturnType<typeof getPlatformStats>> = {};
+    if (!showPlatformSummaryModal) return map;
+    map['total'] = getPlatformStats();
+    map['instagram'] = getPlatformStats('instagram');
+    map['tiktok'] = getPlatformStats('tiktok');
+    map['x'] = getPlatformStats('x');
+    map['facebook'] = getPlatformStats('facebook');
+    map['youtube'] = getPlatformStats('youtube');
+    return map;
+  }, [getPlatformStats, showPlatformSummaryModal]);
+
+  const allTasksStats = useMemo(() => {
+    return {
+      likes: totalTasksList.reduce((s, t) => s + t.likes, 0),
+      comments: totalTasksList.reduce((s, t) => s + t.comments, 0),
+      shares: totalTasksList.reduce((s, t) => s + t.shares, 0),
+      reposts: totalTasksList.reduce((s, t) => s + t.reposts, 0),
+    };
+  }, [totalTasksList]);
+
   // Mark as loaded after first render
   useEffect(() => {
     setHasLoaded(true);
@@ -335,40 +362,45 @@ function App() {
       const results: Record<string, Task[]> = {};
 
       await Promise.all(SHEETS_CONFIG.map(async (sheet) => {
-        const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=${sheet.gid}`;
-        const response = await fetch(url);
-        let csvText = await response.text();
-        csvText = csvText.replace(/^\uFEFF/, '');
-        const rows = parseCSV(csvText);
+        try {
+          const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=${sheet.gid}`;
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          let csvText = await response.text();
+          csvText = csvText.replace(/^\uFEFF/, '');
+          const rows = parseCSV(csvText);
 
-        if (rows.length > 0) {
-          const headers = rows[0].map(h => h.toLowerCase());
-          const parsedTasks: Task[] = [];
-          for (let i = 1; i < rows.length; i++) {
-            const values = rows[i];
-            const getVal = (headerName: string) => {
-              const idx = headers.indexOf(headerName);
-              return idx !== -1 ? (values[idx] || '') : '';
-            };
-            const focusValue = getVal('focus').toLowerCase().trim();
-            const task: Task = {
-              id: getVal('id') || getVal('url') || String(i),
-              phase: sheet.phase as Task['phase'],
-              platform: (getVal('platform') || 'x').toLowerCase().trim() as Task['platform'],
-              url: getVal('url') || '',
-              hashtags: getVal('hashtags') || '',
-              title: getVal('title') || getVal('note') || '',
-              focus: focusValue === 'true' || focusValue === '1' || focusValue === 'yes',
-              likes: parseInt(getVal('likes')) || 0,
-              comments: parseInt(getVal('comments')) || 0,
-              shares: parseInt(getVal('shares')) || 0,
-              reposts: parseInt(getVal('reposts')) || 0,
-              views: parseInt(getVal('view')) || parseInt(getVal('views')) || parseInt(getVal('views ')) || 0,
-              saves: parseInt(getVal('save')) || parseInt(getVal('saves')) || parseInt(getVal('saves ')) || 0,
-            };
-            if (task.url) parsedTasks.push(task);
+          if (rows.length > 0) {
+            const headers = rows[0].map(h => h.toLowerCase().trim());
+            const parsedTasks: Task[] = [];
+            for (let i = 1; i < rows.length; i++) {
+              const values = rows[i];
+              const getVal = (headerName: string) => {
+                const idx = headers.indexOf(headerName.toLowerCase().trim());
+                return idx !== -1 ? (values[idx] || '') : '';
+              };
+              const focusValue = getVal('focus').toLowerCase().trim();
+              const task: Task = {
+                id: getVal('id') || getVal('url') || String(i),
+                phase: sheet.phase as Task['phase'],
+                platform: (getVal('platform') || 'x').toLowerCase().trim() as Task['platform'],
+                url: getVal('url') || '',
+                hashtags: getVal('hashtags') || '',
+                title: getVal('title') || getVal('note') || '',
+                focus: focusValue === 'true' || focusValue === '1' || focusValue === 'yes',
+                likes: parseInt(getVal('likes')) || 0,
+                comments: parseInt(getVal('comments')) || 0,
+                shares: parseInt(getVal('shares')) || 0,
+                reposts: parseInt(getVal('reposts')) || 0,
+                views: parseInt(getVal('view')) || parseInt(getVal('views')) || 0,
+                saves: parseInt(getVal('save')) || parseInt(getVal('saves')) || 0,
+              };
+              if (task.url) parsedTasks.push(task);
+            }
+            results[sheet.phase] = parsedTasks.reverse();
           }
-          results[sheet.phase] = parsedTasks.reverse();
+        } catch (sheetErr) {
+          console.error(`Failed to fetch sheet ${sheet.phase}:`, sheetErr);
         }
       }));
 
@@ -410,25 +442,27 @@ function App() {
 
       if (rows.length > 0) {
         const headers = rows[0].map(h => h.toLowerCase().trim());
-        const idx1 = headers.indexOf('message_en_1');
-        const idx2 = headers.indexOf('message_en_2');
+        const idx1_en = headers.indexOf('message_en_1');
+        const idx2_en = headers.indexOf('message_en_2');
+        const idx1_th = headers.indexOf('message_th_1');
+        const idx2_th = headers.indexOf('message_th_2');
         const idxE = headers.indexOf('emoji');
 
-        const pool1: string[] = [];
-        const pool2: string[] = [];
+        const pools = {
+          en: { p1: [] as string[], p2: [] as string[] },
+          th: { p1: [] as string[], p2: [] as string[] }
+        };
         const poolE: string[] = [];
 
         for (let i = 1; i < rows.length; i++) {
-          const v1 = idx1 !== -1 ? rows[i][idx1]?.trim() : '';
-          const v2 = idx2 !== -1 ? rows[i][idx2]?.trim() : '';
-          const ve = idxE !== -1 ? rows[i][idxE]?.trim() : '';
-          if (v1) pool1.push(v1);
-          if (v2) pool2.push(v2);
-          if (ve) poolE.push(ve);
+          if (idx1_en !== -1 && rows[i][idx1_en]) pools.en.p1.push(rows[i][idx1_en].trim());
+          if (idx2_en !== -1 && rows[i][idx2_en]) pools.en.p2.push(rows[i][idx2_en].trim());
+          if (idx1_th !== -1 && rows[i][idx1_th]) pools.th.p1.push(rows[i][idx1_th].trim());
+          if (idx2_th !== -1 && rows[i][idx2_th]) pools.th.p2.push(rows[i][idx2_th].trim());
+          if (idxE !== -1 && rows[i][idxE]) poolE.push(rows[i][idxE].trim());
         }
 
-        setMsgPool1(pool1);
-        setMsgPool2(pool2);
+        setMsgPools(pools);
         setEmojiPool(poolE);
       }
     } catch (err) {
@@ -482,10 +516,11 @@ function App() {
 
   // Generate random positive message — 2-step: pick from each pool, then pick 1 of 4 patterns
   const generateRandomMessage = useCallback(() => {
-    if (msgPool1.length === 0 || msgPool2.length === 0 || emojiPool.length === 0) return;
+    const activePool = msgPools[language] || msgPools.en;
+    if (activePool.p1.length === 0 || activePool.p2.length === 0 || emojiPool.length === 0) return;
     const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
-    const m1 = pick(msgPool1);
-    const m2 = pick(msgPool2);
+    const m1 = pick(activePool.p1);
+    const m2 = pick(activePool.p2);
     const em = pick(emojiPool);
     const pattern = Math.floor(Math.random() * 6);
     let sentence = '';
@@ -497,7 +532,7 @@ function App() {
     else sentence = `${em} ${m2} ${m1}`;
     setGeneratedMessage(sentence);
     setCopiedType(null);
-  }, [msgPool1, msgPool2, emojiPool]);
+  }, [msgPools, emojiPool, language]);
 
   // Copy functions for 3 different options
   const handleCopyMessage = async () => {
@@ -575,10 +610,15 @@ function App() {
   };
 
   // Load more on scroll
+  const scrollTimeoutRef = useRef<number | null>(null);
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (scrollTimeoutRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-    if (scrollHeight - scrollTop - clientHeight < 200) {
+    if (scrollHeight - scrollTop - clientHeight < 400) {
       setVisibleCount(prev => Math.min(prev + 30, filteredTasks.length));
+      scrollTimeoutRef.current = window.setTimeout(() => {
+        scrollTimeoutRef.current = null;
+      }, 100);
     }
   }, [filteredTasks.length]);
 
@@ -611,19 +651,24 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen relative bg-prada-offwhite">
+    <div className="h-screen flex flex-col relative bg-prada-offwhite overflow-hidden">
       {/* Subtle paper texture overlay */}
-      <div className="fixed inset-0 z-0 opacity-[0.03]" style={{
+      <div className="fixed inset-0 z-0 opacity-[0.03] pointer-events-none" style={{
         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23000000' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E")`
       }} />
 
-      {/* Content */}
-      <div className="relative z-[2]">
+      {/* Left-aligned background image */}
+      {/* <div className="fixed bottom-0 left-0 z-0 pointer-events-none w-[45vw] sm:w-[35vw] max-w-[400px] opacity-15 sm:opacity-25 transition-opacity">
+        <img src="/nt-2.png" alt="" className="w-full h-auto object-contain object-left-bottom" />
+      </div> */}
+
+      {/* Header Container (Fixed at top) */}
+      <div className="relative z-40 flex-shrink-0 bg-prada-offwhite">
         {/* Header */}
-        <header className="sticky top-0 z-40 backdrop-blur-xl bg-prada-offwhite/95 border-b border-prada-warm/50">
-          <div className="max-w-lg mx-auto px-4 pt-3 pb-2">
+        <header className="backdrop-blur-xl bg-prada-offwhite/95 border-b border-prada-warm/50 shadow-sm">
+          <div className="max-w-lg mx-auto px-4 pt-3 pb-0">
             {/* Hero: Image + Title */}
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3 mb-0">
               <div className="w-16 h-20 sm:w-20 sm:h-24 flex-shrink-0">
                 <img
                   src="/nt.png"
@@ -672,7 +717,7 @@ function App() {
           {/* Navigation & Timeline Area */}
           <div className="bg-white/40 backdrop-blur-md">
             {/* Phase Filters - Compact & Meaningful */}
-            <div className="w-full max-w-lg mx-auto px-2 py-2 grid grid-cols-5 gap-1.5">
+            <div className="w-full max-w-lg mx-auto px-2 pt-1 pb-2 grid grid-cols-5 gap-1.5">
               {[
                 { id: 'all', icon: '✦', label: t('allLabel'), desc: t('sixteenDaysShort'), days: [] },
                 { id: 'pre', icon: '🗓️', label: t('preLabel'), desc: t('phasePreShort'), days: ['22 Feb', '23 Feb'] },
@@ -704,7 +749,7 @@ function App() {
 
           {/* Filter chips + Refresh + Hide */}
           <div className="max-w-lg mx-auto px-4">
-            <div className="flex justify-center gap-2 items-center py-2.5">
+            <div className="flex justify-center gap-2 items-center pt-1 pb-2">
               <button
                 onClick={() => setFilterPlatform(null)}
                 className={`w-[34px] h-[34px] sm:w-9 sm:h-9 rounded-full flex-shrink-0 text-[9.5px] sm:text-[10.5px] font-bold border transition-transform flex items-center justify-center shadow-sm ${!filterPlatform
@@ -745,776 +790,786 @@ function App() {
             </div>
           </div>
         </header>
+      </div>
 
-        {/* Mission Impact Stats Card - RED THEMED ELEGANT VERSION */}
-        {totalTasksList.length > 0 && !loading && !error && showGlobalStats && (
-          <div className="max-w-lg mx-auto px-5 pt-3 pb-1 relative z-0 animate-in fade-in zoom-in-95 duration-500">
-            <div className="bg-white/80 backdrop-blur-2xl rounded-[2rem] p-4 sm:p-5 mx-0 border border-prada-warm/30 shadow-2xl shadow-black/5 relative overflow-hidden group">
-              {/* Decorative background - white hazy glow */}
-              <div className="absolute top-0 right-0 -mr-12 -mt-12 w-32 h-32 bg-white/50 rounded-full blur-2xl pointer-events-none"></div>
-              <div className="absolute bottom-0 left-0 -ml-12 -mb-12 w-32 h-32 bg-white/30 rounded-full blur-2xl pointer-events-none"></div>
+      {/* Scrollable Middle Area */}
+      <main
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto"
+      >
+        <div className="max-w-lg mx-auto flex flex-col gap-1 px-3 pt-4 pb-2">
 
-              {/* Header area */}
-              <div className="flex items-start justify-between relative z-10 mb-4">
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-prada-warm/25 flex items-center justify-center text-prada-charcoal border border-prada-warm/40 shadow-sm">
-                      <span className="text-base">✨</span>
+          {/* Mission Impact Stats Card */}
+          {totalTasksList.length > 0 && !loading && !error && showGlobalStats && (
+            <div className="mb-1 animate-in fade-in zoom-in-95 duration-500">
+              <div className="bg-white/80 backdrop-blur-2xl rounded-[2rem] p-4 sm:p-5 mx-0 border border-prada-warm/30 shadow-2xl shadow-black/5 relative overflow-hidden group">
+                {/* Decorative background - white hazy glow */}
+                <div className="absolute top-0 right-0 -mr-12 -mt-12 w-32 h-32 bg-white/50 rounded-full blur-2xl pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 -ml-12 -mb-12 w-32 h-32 bg-white/30 rounded-full blur-2xl pointer-events-none"></div>
+
+                {/* Header area */}
+                <div className="flex items-start justify-between relative z-10 mb-4">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-prada-warm/25 flex items-center justify-center text-prada-charcoal border border-prada-warm/40 shadow-sm">
+                        <span className="text-base">✨</span>
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-bold text-prada-charcoal tracking-tight leading-none">
+                          {t('globalStats')}
+                        </h2>
+                        <p className="text-[8px] font-bold text-prada-charcoal/60 tracking-widest uppercase mt-1">
+                          {t('sixteenDays')}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-sm font-bold text-prada-charcoal tracking-tight leading-none">
-                        {t('globalStats')}
-                      </h2>
-                      <p className="text-[8px] font-bold text-prada-charcoal/60 tracking-widest uppercase mt-1">
-                        {t('sixteenDays')}
-                      </p>
-                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-1">
+                    <button
+                      onClick={() => setShowGlobalStats(false)}
+                      className="w-7 h-7 rounded-lg bg-prada-warm/25 text-prada-charcoal border border-prada-warm/40 shadow-sm hover:bg-prada-warm/40 active:scale-95 flex items-center justify-center"
+                      title={t('minimize')}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-3 h-3">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </button>
+                    <span className="text-[6.5px] font-bold text-prada-charcoal/50 uppercase tracking-[0.1em] animate-pulse text-center leading-tight">
+                      {t('tapToHide')}
+                    </span>
                   </div>
                 </div>
 
-                <div className="flex flex-col items-center gap-1">
-                  <button
-                    onClick={() => setShowGlobalStats(false)}
-                    className="w-7 h-7 rounded-lg bg-prada-warm/25 text-prada-charcoal border border-prada-warm/40 shadow-sm hover:bg-prada-warm/40 active:scale-95 flex items-center justify-center"
-                    title={t('minimize')}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-3 h-3">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                    </svg>
-                  </button>
-                  <span className="text-[6.5px] font-bold text-prada-charcoal/50 uppercase tracking-[0.1em] animate-pulse text-center leading-tight">
-                    {t('tapToHide')}
-                  </span>
+                {/* Main Content Area - mobile: stack vertically; sm+: rail left, stats right */}
+                <div className="relative z-10">
+                  <div className="flex flex-col sm:flex-row gap-3 sm:items-stretch">
+                    {/* Mode Toggle: horizontal on mobile, vertical rail on sm+ */}
+                    <div className="flex flex-row sm:flex-col gap-2 sm:w-[96px] flex-shrink-0">
+                      <button
+                        onClick={() => setStatsPeriod('miv')}
+                        className={`flex-1 sm:flex-none sm:h-12 rounded-full px-3 py-2.5 sm:px-3.5 sm:py-0 flex flex-col items-center justify-center text-[10px] font-bold tracking-[0.14em] uppercase min-w-0 ${statsPeriod === 'miv'
+                          ? 'bg-prada-charcoal text-white shadow-md shadow-black/15'
+                          : 'bg-white/80 text-prada-charcoal/70 border border-prada-warm/30'
+                          }`}
+                      >
+                        <span className="text-[11px] sm:text-[13px] font-bold leading-none">MIV</span>
+                        <span className="text-[6.5px] sm:text-[7.5px] font-medium mt-0.5 tracking-[0.12em] whitespace-nowrap overflow-hidden text-ellipsis max-w-full">
+                          22 FEB - 9 MAR
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => setStatsPeriod('emv')}
+                        className={`flex-1 sm:flex-none sm:h-12 rounded-full px-3 py-2.5 sm:px-3.5 sm:py-0 flex flex-col items-center justify-center text-[10px] font-bold tracking-[0.14em] uppercase min-w-0 ${statsPeriod === 'emv'
+                          ? 'bg-prada-charcoal text-white shadow-md shadow-black/15'
+                          : 'bg-white/80 text-prada-charcoal/70 border border-prada-warm/30'
+                          }`}
+                      >
+                        <span className="text-[11px] sm:text-[13px] font-bold leading-none">EMV</span>
+                        <span className="text-[6.5px] sm:text-[7.5px] font-medium mt-0.5 tracking-[0.12em] whitespace-nowrap overflow-hidden text-ellipsis max-w-full">
+                          24 FEB - 2 MAR
+                        </span>
+                      </button>
+                    </div>
+
+                    {(() => {
+                      const statCards = [
+                        { labelLines: [t('commentsLabel'), t('replies')], value: dashboardStats.comments, icon: <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /> },
+                        { labelLines: [t('sharesLabel'), t('quotesWord'), t('reposts')], value: dashboardStats.shares + dashboardStats.reposts, icon: <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /> },
+                        { labelLines: [t('savesLabel')], value: dashboardStats.saves, icon: <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" /> },
+                        { labelLines: [t('viewsLabel')], value: dashboardStats.views, icon: <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /> },
+                      ];
+                      return (
+                        <div className="flex-1 min-w-0 space-y-3">
+                          {/* Top card: icon left, number + label right */}
+                          <div className="bg-white rounded-[1.25rem] py-4 px-4 sm:px-5 border border-prada-warm/25 shadow-md shadow-black/5 flex items-center justify-between gap-3 min-h-[4rem]">
+                            <div className="text-prada-charcoal flex-shrink-0">
+                              <svg viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7 sm:w-8 sm:h-8"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+                            </div>
+                            <div className="flex flex-col items-end text-right min-w-0">
+                              <span className="text-2xl sm:text-3xl font-bold text-prada-charcoal tabular-nums leading-none">
+                                {dashboardStats.likes.toLocaleString()}
+                              </span>
+                              <span className="text-xs font-medium text-prada-charcoal/60 mt-0.5">
+                                {t('totalLikesLabel')}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 2x2 grid: icon left, number + label right */}
+                          <div className="grid grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
+                            {statCards.map((item, idx) => (
+                              <div
+                                key={idx}
+                                className="bg-white rounded-[1.15rem] py-3.5 px-3.5 sm:px-4 border border-prada-warm/25 shadow-md shadow-black/5 flex items-center justify-between gap-2 min-w-0 min-h-[4rem]"
+                              >
+                                <div className="text-prada-charcoal flex-shrink-0">
+                                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6">{item.icon}</svg>
+                                </div>
+                                <div className="flex flex-col items-end text-right min-w-0">
+                                  <span className="text-lg sm:text-xl font-bold text-prada-charcoal tabular-nums leading-none">
+                                    {item.value.toLocaleString()}
+                                  </span>
+                                  <p className="text-[11px] sm:text-xs font-medium text-prada-charcoal/60 leading-tight line-clamp-2 mt-0.5">
+                                    {item.labelLines.join(' ')}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="h-1" />
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error state */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-red-700 my-2">
+              {t('error')}
+            </div>
+          )}
+
+          {visibleTasks.map((task, index) => {
+            const config = platformConfig[task.platform];
+            return (
+              <div key={`${task.id}-${index}`}>
+                {(index === 0 || isTaskCompleted(task) !== isTaskCompleted(visibleTasks[index - 1])) && (
+                  <div className="flex items-center gap-3 mb-2 mt-6 first:mt-2">
+                    <h3 className="text-sm font-bold text-prada-charcoal uppercase tracking-widest pl-2">
+                      {isTaskCompleted(task) ? t('done') : t('pending')}
+                    </h3>
+                    <div className="flex-1 h-px bg-prada-warm/50" />
+                  </div>
+                )}
+
+                <div
+                  onClick={() => setSelectedTask(task)}
+                  className={`flex items-center gap-2 bg-prada-offwhite rounded-2xl py-2.5 px-3 mb-1.5 border cursor-pointer hover:shadow-md transition-all group animate-in fade-in slide-in-from-bottom-4 duration-300 ${isTaskCompleted(task)
+                    ? 'border-prada-warm/50 opacity-60 grayscale-[0.3]'
+                    : task.focus
+                      ? 'border-prada-warm bg-prada-warm/10 shadow-sm relative overflow-hidden'
+                      : 'border-prada-warm/50'
+                    }`}
+                  style={{ animationDelay: `${(index % 10) * 50}ms` }}
+                >
+                  {/* Platform badge */}
+                  <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${config.color} flex items-center justify-center text-sm flex-shrink-0 shadow-sm text-white`}>
+                    {isTaskCompleted(task) ? '✓' : config.icon}
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[13px] font-medium text-prada-charcoal/90 truncate">
+                        {task.title || t('noTitle')}
+                      </span>
+                      {task.focus && !isTaskCompleted(task) && (
+                        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-gradient-to-r from-prada-gold to-prada-darkgold text-white rounded-full flex-shrink-0 animate-pulse">
+                          {t('focusBadge')}
+                        </span>
+                      )}
+                    </div>
+                    {/* Engagement Metrics */}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {task.likes > 0 && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+                          {task.likes}
+                        </span>
+                      )}
+                      {task.comments > 0 && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
+                          {task.comments}
+                        </span>
+                      )}
+                      {task.shares > 0 && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /></svg>
+                          {task.shares}
+                        </span>
+                      )}
+                      {task.reposts > 0 && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
+                          {task.reposts}
+                        </span>
+                      )}
+                      {task.likes === 0 && task.comments === 0 && task.shares === 0 && task.reposts === 0 && (
+                        <span className="text-[10px] text-prada-taupe/40">—</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  {isTaskCompleted(task) ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUnmarkComplete(task);
+                      }}
+                      className="text-prada-taupe/50 text-[11px] hover:text-prada-charcoal/60 px-2 py-1"
+                    >
+                      ↩
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e) => handleQuickComplete(task, e)}
+                      className="bg-prada-warm/30 border border-prada-warm/50 text-prada-charcoal text-xs px-2 py-1 rounded-md font-semibold hover:bg-prada-warm/50 transition-colors"
+                    >
+                      ✓
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Load more indicator */}
+          {visibleCount < filteredTasks.length && (
+            <div className="text-center py-4 text-prada-taupe text-xs">
+              {t('scrollToLoad')} ({visibleCount}/{filteredTasks.length})
+            </div>
+          )}
+
+          {tasks.length === 0 && !error && !loading && (
+            <div className="text-center py-12 text-prada-taupe">
+              <p className="text-4xl mb-4">📭</p>
+              <p>{t('noTasks')}</p>
+            </div>
+          )}
+
+          {filteredTasks.length === 0 && tasks.length > 0 && (
+            <div className="text-center py-12 text-prada-taupe animate-in fade-in zoom-in duration-700">
+              <p className="text-4xl mb-4 grayscale opacity-40">🎉</p>
+              <p className="font-bold tracking-widest uppercase text-xs opacity-60">{t('allDone')}</p>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* Bottom Bar Container (Fixed at bottom) */}
+      <footer className="relative z-40 flex-shrink-0 bg-prada-offwhite pt-2 pb-2 border-t border-prada-warm/30 shadow-[0_-4px_10px_rgba(0,0,0,0.03)]">
+        <div className="max-w-lg mx-auto relative px-4">
+          {/* Stats Bar */}
+          <div className="bg-prada-charcoal/95 backdrop-blur-xl rounded-full px-5 py-2.5 flex items-center justify-between shadow-xl border border-prada-charcoal/50">
+            <div className="flex items-center gap-4 sm:gap-6">
+              <button
+                onClick={() => setShowPlatformSummaryModal(true)}
+                className="flex items-center gap-1.5 pr-1 hover:opacity-70 transition-opacity"
+              >
+                <span className="text-[12px] font-bold text-white whitespace-nowrap">✦ {t('summary')}</span>
+              </button>
+
+              <div className="w-px h-6 bg-white/10" />
+
+              <div className="flex flex-col items-center min-w-[45px]">
+                <div className="text-[11px] font-bold text-prada-cream flex items-baseline leading-none mb-0.5 whitespace-nowrap">
+                  {pendingCount} <span className="text-[9px] font-normal opacity-60 ml-1">/ {totalTasksList.length}</span>
+                </div>
+                <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest whitespace-nowrap leading-none">{t('pending')}</div>
+              </div>
+
+              <div className="w-px h-6 bg-white/10" />
+
+              <div className="flex flex-col items-center min-w-[45px]">
+                <div className="text-[13px] font-bold text-white shadow-sm leading-none mb-0.5">
+                  {completedCount}
+                </div>
+                <div className="text-[7.5px] text-prada-cream/80 uppercase tracking-widest whitespace-nowrap leading-none">{t('done')}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col items-center min-w-[40px]">
+                <div className="text-[13px] font-bold text-white leading-none mb-0.5">
+                  {totalTasksList.length ? Math.round((totalCompletedCount / totalTasksList.length) * 100) : 0}%
+                </div>
+                <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest leading-none">{t('totalLabel')}</div>
+              </div>
+
+              <div className="w-px h-6 bg-white/10" />
+
+              {/* Refresh Button */}
+              <button
+                onClick={() => fetchAllData(true)}
+                disabled={refreshing}
+                className={`p-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 transition-all ${refreshing ? 'animate-spin opacity-50' : ''}`}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-3.5 h-3.5 text-white">
+                  <path d="M4 4v5h5M20 20v-5h-5M20 9A9 9 0 0 0 5.64 5.64L4 9M4 15a9 9 0 0 0 14.36 3.36L20 15" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      {/* Stats Bottom Sheet Modal */}
+      {
+        showStatsModal && (
+          <div
+            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
+            onClick={() => setShowStatsModal(false)}
+          >
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-prada-charcoal/40 backdrop-blur-sm animate-in fade-in duration-200"></div>
+
+            {/* Modal Content */}
+            <div
+              className="relative w-full max-w-md bg-prada-offwhite/98 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl border border-prada-warm shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 pb-safe"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Handle bar (mobile) */}
+              <div className="w-12 h-1.5 bg-prada-warm rounded-full mx-auto mt-3 mb-2 sm:hidden" />
+
+              {/* Header */}
+              <div className="px-5 pt-3 pb-4 flex items-center justify-between border-b border-prada-warm/50">
+                <h3 className="text-lg font-display font-bold text-prada-charcoal flex items-center gap-2">
+                  <span className="text-prada-gold font-serif">✦</span> {t('missionImpact')}
+                </h3>
+                <button
+                  onClick={() => setShowStatsModal(false)}
+                  className="w-8 h-8 rounded-full bg-prada-cream hover:bg-prada-stone flex items-center justify-center text-prada-charcoal/60 hover:text-prada-charcoal transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Stats Content */}
+              <div className="p-5">
+                <div className="flex flex-col gap-4">
+                  <div className="bg-prada-cream/50 rounded-2xl p-4 border border-prada-warm flex items-center justify-between">
+                    <span className="text-sm font-medium text-prada-charcoal/80 uppercase tracking-wider">{t('completedTasks')}</span>
+                    <span className="text-lg font-bold text-prada-charcoal">
+                      {totalCompletedCount} <span className="text-sm font-normal text-prada-taupe">/ {totalTasksList.length}</span>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-rose-400"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+                      <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('likes')}</span>
+                      <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
+                        {allTasksStats.likes.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-blue-400"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
+                      <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('comments')}</span>
+                      <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
+                        {allTasksStats.comments.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-prada-charcoal/70"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /></svg>
+                      <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('shares')}</span>
+                      <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
+                        {allTasksStats.shares.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-purple-400"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
+                      <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('reposts')}</span>
+                      <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
+                        {allTasksStats.reposts.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Main Content Area - mobile: stack vertically; sm+: rail left, stats right */}
-              <div className="relative z-10">
-                <div className="flex flex-col sm:flex-row gap-3 sm:items-stretch">
-                  {/* Mode Toggle: horizontal on mobile, vertical rail on sm+ */}
-                  <div className="flex flex-row sm:flex-col gap-2 sm:w-[96px] flex-shrink-0">
-                    <button
-                      onClick={() => setStatsPeriod('miv')}
-                      className={`flex-1 sm:flex-none sm:h-12 rounded-full px-3 py-2.5 sm:px-3.5 sm:py-0 flex flex-col items-center justify-center text-[10px] font-bold tracking-[0.14em] uppercase min-w-0 ${statsPeriod === 'miv'
-                        ? 'bg-prada-charcoal text-white shadow-md shadow-black/15'
-                        : 'bg-white/80 text-prada-charcoal/70 border border-prada-warm/30'
-                        }`}
-                    >
-                      <span className="text-[11px] sm:text-[13px] font-bold leading-none">MIV</span>
-                      <span className="text-[6.5px] sm:text-[7.5px] font-medium mt-0.5 tracking-[0.12em] whitespace-nowrap overflow-hidden text-ellipsis max-w-full">
-                        22 FEB - 9 MAR
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => setStatsPeriod('emv')}
-                      className={`flex-1 sm:flex-none sm:h-12 rounded-full px-3 py-2.5 sm:px-3.5 sm:py-0 flex flex-col items-center justify-center text-[10px] font-bold tracking-[0.14em] uppercase min-w-0 ${statsPeriod === 'emv'
-                        ? 'bg-prada-charcoal text-white shadow-md shadow-black/15'
-                        : 'bg-white/80 text-prada-charcoal/70 border border-prada-warm/30'
-                        }`}
-                    >
-                      <span className="text-[11px] sm:text-[13px] font-bold leading-none">EMV</span>
-                      <span className="text-[6.5px] sm:text-[7.5px] font-medium mt-0.5 tracking-[0.12em] whitespace-nowrap overflow-hidden text-ellipsis max-w-full">
-                        24 FEB - 2 MAR
-                      </span>
-                    </button>
-                  </div>
+            </div>
+          </div>
+        )
+      }
 
+      {/* Platform Summary Modal */}
+      {
+        showPlatformSummaryModal && (
+          <div
+            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
+            onClick={() => setShowPlatformSummaryModal(false)}
+          >
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-prada-charcoal/40 backdrop-blur-sm animate-in fade-in duration-200"></div>
+
+            {/* Modal Content */}
+            <div
+              className="relative w-full max-w-md bg-prada-offwhite/98 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl border border-prada-warm shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 pb-safe"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Handle bar (mobile) */}
+              <div className="w-12 h-1.5 bg-prada-warm rounded-full mx-auto mt-3 mb-2 sm:hidden" />
+
+              {/* Header */}
+              <div className="px-5 pt-3.5 pb-4 flex items-center justify-between bg-prada-charcoal shrink-0 shadow-md">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span className="text-white font-serif">✦</span> {t('summary')}
+                </h3>
+                <button
+                  onClick={() => setShowPlatformSummaryModal(false)}
+                  className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors border border-white/20"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Stats Content */}
+              <div className="p-5 overflow-y-auto max-h-[70vh] sm:max-h-[80vh]">
+                <div className="flex flex-col gap-4">
+
+                  {/* Grand Total Overview */}
                   {(() => {
-                    const dashboardStats = getPlatformStats();
-                    const statCards = [
-                      { labelLines: [t('commentsLabel'), t('replies')], value: dashboardStats.comments, icon: <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /> },
-                      { labelLines: [t('sharesLabel'), t('quotesWord'), t('reposts')], value: dashboardStats.shares + dashboardStats.reposts, icon: <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /> },
-                      { labelLines: [t('savesLabel')], value: dashboardStats.saves, icon: <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" /> },
-                      { labelLines: [t('viewsLabel')], value: dashboardStats.views, icon: <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /> },
-                    ];
+                    const totalAll = platformStatsMap['total'] || dashboardStats;
                     return (
-                      <div className="flex-1 min-w-0 space-y-3">
-                        {/* Top card: icon left, number + label right */}
-                        <div className="bg-white rounded-[1.25rem] py-4 px-4 sm:px-5 border border-prada-warm/25 shadow-md shadow-black/5 flex items-center justify-between gap-3 min-h-[4rem]">
-                          <div className="text-prada-charcoal flex-shrink-0">
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7 sm:w-8 sm:h-8"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
-                          </div>
-                          <div className="flex flex-col items-end text-right min-w-0">
-                            <span className="text-2xl sm:text-3xl font-bold text-prada-charcoal tabular-nums leading-none">
-                              {dashboardStats.likes.toLocaleString()}
-                            </span>
-                            <span className="text-xs font-medium text-prada-charcoal/60 mt-0.5">
-                              {t('totalLikesLabel')}
-                            </span>
-                          </div>
-                        </div>
+                      <div className="bg-gradient-to-br from-white to-prada-cream/30 backdrop-blur-xl rounded-[2rem] p-4 sm:p-5 shadow-xl shadow-black/5 border border-prada-warm/20 relative overflow-hidden mb-1">
+                        {/* Decorative subtle element */}
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/40 rounded-full blur-2xl"></div>
 
-                        {/* 2x2 grid: icon left, number + label right */}
-                        <div className="grid grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
-                          {statCards.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className="bg-white rounded-[1.15rem] py-3.5 px-3.5 sm:px-4 border border-prada-warm/25 shadow-md shadow-black/5 flex items-center justify-between gap-2 min-w-0 min-h-[4rem]"
-                            >
-                              <div className="text-prada-charcoal flex-shrink-0">
-                                <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 sm:w-6 sm:h-6">{item.icon}</svg>
+                        <div className="relative z-10 flex flex-col gap-4">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-prada-charcoal font-serif text-lg">✦</span>
+                            <h4 className="text-prada-charcoal font-bold text-[15px] tracking-wide">{t('totalStats')}</h4>
+                          </div>
+
+                          {/* Highlighted Likes */}
+                          <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-4 border border-prada-warm/20 flex items-center justify-between shadow-sm">
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2 mb-1">
+                                <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-prada-charcoal"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+                                <span className="text-prada-charcoal font-bold text-base uppercase tracking-wider">{t('totalLikesLabel')}</span>
                               </div>
-                              <div className="flex flex-col items-end text-right min-w-0">
-                                <span className="text-lg sm:text-xl font-bold text-prada-charcoal tabular-nums leading-none">
-                                  {item.value.toLocaleString()}
-                                </span>
-                                <p className="text-[11px] sm:text-xs font-medium text-prada-charcoal/60 leading-tight line-clamp-2 mt-0.5">
-                                  {item.labelLines.join(' ')}
-                                </p>
-                              </div>
+                              <span className="text-prada-taupe/60 text-[10px] sm:text-[11px] font-medium leading-tight">{t('totalLikesDesc')}</span>
                             </div>
-                          ))}
-                        </div>
+                            <span className="text-xl sm:text-2xl font-bold text-prada-charcoal tracking-tight truncate max-w-[50%]" title={totalAll.likes.toLocaleString()}>{totalAll.likes.toLocaleString()}</span>
+                          </div>
 
-                        <div className="h-1" />
+                          {/* Other Stats Grid */}
+                          <div className="grid grid-cols-2 gap-3">
+                            {/* Comments */}
+                            <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
+                              <div className="flex items-center justify-between mb-1.5 gap-2">
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('commentsLabel')}</span>
+                                </div>
+                                <span className="text-[13px] font-bold text-prada-charcoal truncate" title={totalAll.comments.toLocaleString()}>{totalAll.comments.toLocaleString()}</span>
+                              </div>
+                              <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('commentsDesc')}</span>
+                            </div>
+
+                            {/* Shares & Reposts */}
+                            <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
+                              <div className="flex items-center justify-between mb-1.5 gap-2">
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('sharesLabel')}</span>
+                                </div>
+                                <span className="text-[13px] font-bold text-prada-charcoal truncate" title={(totalAll.shares + totalAll.reposts).toLocaleString()}>{(totalAll.shares + totalAll.reposts).toLocaleString()}</span>
+                              </div>
+                              <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('sharesDesc')}</span>
+                            </div>
+
+                            {/* Saves */}
+                            <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
+                              <div className="flex items-center justify-between mb-1.5 gap-2">
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('savesLabel')}</span>
+                                </div>
+                                <span className="text-[13px] font-bold text-prada-charcoal truncate" title={totalAll.saves.toLocaleString()}>{totalAll.saves.toLocaleString()}</span>
+                              </div>
+                              <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('savesDesc')}</span>
+                            </div>
+
+                            {/* Views */}
+                            <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
+                              <div className="flex items-center justify-between mb-1.5 gap-2">
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('viewsLabel')}</span>
+                                </div>
+                                <span className="text-[13px] font-bold text-prada-charcoal truncate" title={totalAll.views.toLocaleString()}>{totalAll.views.toLocaleString()}</span>
+                              </div>
+                              <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('viewsDesc')}</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     );
                   })()}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Error state */}
-        {
-          error && (
-            <div className="max-w-lg mx-auto px-4 py-4">
-              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-red-700">
-                {t('error')}
-              </div>
-            </div>
-          )
-        }
+                  {[
+                    { id: 'instagram', label: t('igLabel'), icon: <InstagramIcon />, color: 'from-rose-400 to-purple-500' },
+                    { id: 'tiktok', label: t('ttLabel'), icon: <TikTokIcon />, color: 'from-prada-charcoal to-prada-black' },
+                    { id: 'x', label: t('xLabel'), icon: <XIcon />, color: 'from-slate-700 to-slate-900' },
+                    { id: 'facebook', label: t('fbLabel'), icon: <FacebookIcon />, color: 'from-blue-500 to-blue-700' },
+                    { id: 'youtube', label: t('ytLabel'), icon: <YouTubeIcon />, color: 'from-red-500 to-red-700' },
+                  ].map(p => {
+                    const stats = platformStatsMap[p.id] || dashboardStats;
 
-        {/* Task List */}
-        <main
-          onScroll={handleScroll}
-          className="max-w-lg mx-auto px-3 py-3 h-[calc(100vh-140px)] overflow-y-auto"
-        >
-          <div className="flex flex-col gap-1.5 pb-24">
-            {visibleTasks.map((task, index) => {
-              const config = platformConfig[task.platform];
-              return (
-                <div key={`${task.id}-${index}`}>
-                  {(index === 0 || isTaskCompleted(task) !== isTaskCompleted(visibleTasks[index - 1])) && (
-                    <div className="flex items-center gap-3 mb-4 mt-6 first:mt-2">
-                      <h3 className="text-sm font-bold text-prada-charcoal uppercase tracking-widest pl-2">
-                        {isTaskCompleted(task) ? t('done') : t('pending')}
-                      </h3>
-                      <div className="flex-1 h-px bg-prada-warm/50" />
-                    </div>
-                  )}
+                    // Base Icons
+                    const likeIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>;
+                    const commentIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>;
+                    const shareIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /></svg>;
+                    const repostIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>;
+                    const viewIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>;
+                    const sendIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>;
+                    const saveIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>;
 
-                  <div
-                    onClick={() => setSelectedTask(task)}
-                    className={`flex items-center gap-2 bg-prada-offwhite rounded-2xl p-3 mb-2.5 border cursor-pointer hover:shadow-md transition-all group ${isTaskCompleted(task)
-                      ? 'border-prada-warm/50 opacity-60 grayscale-[0.3]'
-                      : task.focus
-                        ? 'border-prada-warm bg-prada-warm/10 shadow-sm relative overflow-hidden'
-                        : 'border-prada-warm/50'
-                      }`}
-                  >
-                    {/* Platform badge */}
-                    <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${config.color} flex items-center justify-center text-sm flex-shrink-0 shadow-sm text-white`}>
-                      {isTaskCompleted(task) ? '✓' : config.icon}
-                    </div>
+                    let metrics: { label: string, value: number, color: string, icon: any }[] = [];
 
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[13px] font-medium text-prada-charcoal/90 truncate">
-                          {task.title || t('noTitle')}
-                        </span>
-                        {task.focus && !isTaskCompleted(task) && (
-                          <span className="px-1.5 py-0.5 text-[9px] font-bold bg-gradient-to-r from-prada-gold to-prada-darkgold text-white rounded-full flex-shrink-0 animate-pulse">
-                            {t('focusBadge')}
-                          </span>
-                        )}
-                      </div>
-                      {/* Engagement Metrics */}
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {task.likes > 0 && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
-                            {task.likes}
-                          </span>
-                        )}
-                        {task.comments > 0 && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
-                            {task.comments}
-                          </span>
-                        )}
-                        {task.shares > 0 && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /></svg>
-                            {task.shares}
-                          </span>
-                        )}
-                        {task.reposts > 0 && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-prada-taupe">
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="w-[11px] h-[11px]"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
-                            {task.reposts}
-                          </span>
-                        )}
-                        {task.likes === 0 && task.comments === 0 && task.shares === 0 && task.reposts === 0 && (
-                          <span className="text-[10px] text-prada-taupe/40">—</span>
-                        )}
-                      </div>
-                    </div>
+                    if (p.id === 'instagram') {
+                      metrics = [
+                        { label: t('likes'), value: stats.likes, color: 'text-rose-400', icon: likeIcon },
+                        { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
+                        { label: t('reposts'), value: stats.reposts, color: 'text-purple-400', icon: repostIcon },
+                        { label: t('sends'), value: stats.shares, color: 'text-indigo-400', icon: sendIcon },
+                        { label: t('view'), value: stats.views, color: 'text-emerald-500', icon: viewIcon },
+                      ];
+                    } else if (p.id === 'tiktok') {
+                      metrics = [
+                        { label: t('likes'), value: stats.likes, color: 'text-rose-400', icon: likeIcon },
+                        { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
+                        { label: t('saves'), value: stats.saves, color: 'text-amber-500', icon: saveIcon },
+                        { label: t('shares'), value: stats.shares, color: 'text-prada-charcoal/70', icon: shareIcon },
+                      ];
+                    } else if (p.id === 'x') {
+                      metrics = [
+                        { label: t('likes'), value: stats.likes, color: 'text-rose-400', icon: likeIcon },
+                        { label: t('replies'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
+                        { label: t('reposts'), value: stats.reposts, color: 'text-purple-400', icon: repostIcon },
+                      ];
+                    } else if (p.id === 'facebook') {
+                      metrics = [
+                        { label: t('likes'), value: stats.likes, color: 'text-blue-500', icon: likeIcon },
+                        { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
+                        { label: t('shares'), value: stats.shares, color: 'text-prada-charcoal/70', icon: shareIcon },
+                      ];
+                    } else if (p.id === 'youtube') {
+                      metrics = [
+                        { label: t('likes'), value: stats.likes, color: 'text-rose-500', icon: likeIcon },
+                        { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
+                        { label: t('view'), value: stats.views, color: 'text-emerald-500', icon: viewIcon },
+                      ];
+                    }
 
-                    {/* Actions */}
-                    {isTaskCompleted(task) ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleUnmarkComplete(task);
-                        }}
-                        className="text-prada-taupe/50 text-[11px] hover:text-prada-charcoal/60 px-2 py-1"
-                      >
-                        ↩
-                      </button>
-                    ) : (
-                      <button
-                        onClick={(e) => handleQuickComplete(task, e)}
-                        className="bg-prada-warm/30 border border-prada-warm/50 text-prada-charcoal text-xs px-2 py-1 rounded-md font-semibold hover:bg-prada-warm/50 transition-colors"
-                      >
-                        ✓
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Load more indicator */}
-            {visibleCount < filteredTasks.length && (
-              <div className="text-center py-4 text-prada-taupe text-xs">
-                {t('scrollToLoad')} ({visibleCount}/{filteredTasks.length})
-              </div>
-            )}
-
-            {tasks.length === 0 && !error && !loading && (
-              <div className="text-center py-12 text-prada-taupe">
-                <p className="text-4xl mb-4">📭</p>
-                <p>{t('noTasks')}</p>
-              </div>
-            )}
-
-            {filteredTasks.length === 0 && tasks.length > 0 && (
-              <div className="text-center py-12 text-prada-taupe">
-                <p className="text-4xl mb-4">🎉</p>
-                <p>{t('allDone')}</p>
-              </div>
-            )}
-          </div>
-        </main>
-
-        {/* Floating stats */}
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-prada-charcoal/95 backdrop-blur-xl rounded-full px-5 sm:px-6 py-2.5 flex items-center gap-4 sm:gap-6 shadow-xl shadow-prada-charcoal/20 z-30 scale-90 sm:scale-100 border border-prada-charcoal/50">
-          <button
-            onClick={() => setShowPlatformSummaryModal(true)}
-            className="flex items-center gap-1.5 pr-1 hover:opacity-70 transition-opacity"
-          >
-            <span className="text-[12px] font-bold text-white whitespace-nowrap">✦ {t('summary')}</span>
-          </button>
-
-          <div className="w-px h-6 bg-white/10" />
-
-          <div className="flex flex-col items-center min-w-[50px]">
-            <div className="text-[11px] font-bold text-prada-cream flex items-baseline leading-none mb-0.5 whitespace-nowrap">
-              {pendingCount} <span className="text-[9px] font-normal opacity-60 ml-1">/ {totalTasksList.length}</span>
-            </div>
-            <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest whitespace-nowrap leading-none">{t('pending')}</div>
-          </div>
-
-          <div className="w-px h-6 bg-white/10" />
-
-          <div className="flex flex-col items-center min-w-[50px]">
-            <div className="text-[13px] font-bold text-white shadow-sm leading-none mb-0.5">
-              {completedCount}
-            </div>
-            <div className="text-[7.5px] text-prada-cream/80 uppercase tracking-widest whitespace-nowrap leading-none">{t('done')}</div>
-          </div>
-
-          <div className="w-px h-6 bg-white/10" />
-
-          <div className="flex flex-col items-center min-w-[45px]">
-            <div className="text-[13px] font-bold text-white leading-none mb-0.5">
-              {totalTasksList.length ? Math.round((totalCompletedCount / totalTasksList.length) * 100) : 0}%
-            </div>
-            <div className="text-[7.5px] text-prada-cream/60 uppercase tracking-widest leading-none">{t('totalLabel')}</div>
-          </div>
-
-          <div className="w-px h-6 bg-white/10" />
-
-          {/* Refresh Button */}
-          <button
-            onClick={() => fetchAllData(true)}
-            disabled={refreshing}
-            className={`p-2 rounded-full border border-white/30 bg-white/20 hover:bg-white/30 transition-all shadow-sm ${refreshing ? 'animate-spin opacity-50' : ''}`}
-            title={t('updateData')}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-4 h-4 text-white">
-              <path d="M4 4v5h5M20 20v-5h-5M20 9A9 9 0 0 0 5.64 5.64L4 9M4 15a9 9 0 0 0 14.36 3.36L20 15" />
-            </svg>
-          </button>
-        </div>
-      </div >
-
-      {/* Stats Bottom Sheet Modal */}
-      {showStatsModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
-          onClick={() => setShowStatsModal(false)}
-        >
-          {/* Backdrop */}
-          <div className="absolute inset-0 bg-prada-charcoal/40 backdrop-blur-sm animate-in fade-in duration-200"></div>
-
-          {/* Modal Content */}
-          <div
-            className="relative w-full max-w-md bg-prada-offwhite/98 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl border border-prada-warm shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 pb-safe"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Handle bar (mobile) */}
-            <div className="w-12 h-1.5 bg-prada-warm rounded-full mx-auto mt-3 mb-2 sm:hidden" />
-
-            {/* Header */}
-            <div className="px-5 pt-3 pb-4 flex items-center justify-between border-b border-prada-warm/50">
-              <h3 className="text-lg font-display font-bold text-prada-charcoal flex items-center gap-2">
-                <span className="text-prada-gold font-serif">✦</span> {t('missionImpact')}
-              </h3>
-              <button
-                onClick={() => setShowStatsModal(false)}
-                className="w-8 h-8 rounded-full bg-prada-cream hover:bg-prada-stone flex items-center justify-center text-prada-charcoal/60 hover:text-prada-charcoal transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Stats Content */}
-            <div className="p-5">
-              <div className="flex flex-col gap-4">
-                <div className="bg-prada-cream/50 rounded-2xl p-4 border border-prada-warm flex items-center justify-between">
-                  <span className="text-sm font-medium text-prada-charcoal/80 uppercase tracking-wider">{t('completedTasks')}</span>
-                  <span className="text-lg font-bold text-prada-charcoal">
-                    {totalCompletedCount} <span className="text-sm font-normal text-prada-taupe">/ {totalTasksList.length}</span>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-rose-400"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
-                    <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('likes')}</span>
-                    <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
-                      {totalTasksList.reduce((s, t) => s + t.likes, 0).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-blue-400"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
-                    <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('comments')}</span>
-                    <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
-                      {totalTasksList.reduce((s, t) => s + t.comments, 0).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-prada-charcoal/70"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /></svg>
-                    <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('shares')}</span>
-                    <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
-                      {totalTasksList.reduce((s, t) => s + t.shares, 0).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="bg-white rounded-2xl p-4 border border-prada-warm shadow-sm flex flex-col items-center justify-center gap-1">
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-purple-400"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
-                    <span className="text-[10px] text-prada-taupe font-bold uppercase tracking-wider mt-1">{t('reposts')}</span>
-                    <span className="text-xl font-display font-bold text-prada-charcoal mt-0.5">
-                      {totalTasksList.reduce((s, t) => s + t.reposts, 0).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* Platform Summary Modal */}
-      {showPlatformSummaryModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
-          onClick={() => setShowPlatformSummaryModal(false)}
-        >
-          {/* Backdrop */}
-          <div className="absolute inset-0 bg-prada-charcoal/40 backdrop-blur-sm animate-in fade-in duration-200"></div>
-
-          {/* Modal Content */}
-          <div
-            className="relative w-full max-w-md bg-prada-offwhite/98 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl border border-prada-warm shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 pb-safe"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Handle bar (mobile) */}
-            <div className="w-12 h-1.5 bg-prada-warm rounded-full mx-auto mt-3 mb-2 sm:hidden" />
-
-            {/* Header */}
-            <div className="px-5 pt-3.5 pb-4 flex items-center justify-between bg-prada-charcoal shrink-0 shadow-md">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <span className="text-white font-serif">✦</span> {t('summary')}
-              </h3>
-              <button
-                onClick={() => setShowPlatformSummaryModal(false)}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors border border-white/20"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Stats Content */}
-            <div className="p-5 overflow-y-auto max-h-[70vh] sm:max-h-[80vh]">
-              <div className="flex flex-col gap-4">
-
-                {/* Grand Total Overview */}
-                {(() => {
-                  const totalAll = getPlatformStats();
-                  return (
-                    <div className="bg-gradient-to-br from-white to-prada-cream/30 backdrop-blur-xl rounded-[2rem] p-4 sm:p-5 shadow-xl shadow-black/5 border border-prada-warm/20 relative overflow-hidden mb-1">
-                      {/* Decorative subtle element */}
-                      <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/40 rounded-full blur-2xl"></div>
-
-                      <div className="relative z-10 flex flex-col gap-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-prada-charcoal font-serif text-lg">✦</span>
-                          <h4 className="text-prada-charcoal font-bold text-[15px] tracking-wide">{t('totalStats')}</h4>
+                    return (
+                      <div key={p.id} className="bg-white/80 backdrop-blur-md rounded-xl p-4 border border-prada-warm/30 shadow-sm flex flex-col gap-3">
+                        <div className="flex items-center gap-2 border-b border-prada-warm/50 pb-2">
+                          {p.icon && (
+                            <div className={`w-6 h-6 rounded-md bg-gradient-to-br ${p.color} flex items-center justify-center text-white shrink-0 shadow-sm`}>
+                              <div className="scale-75">{p.icon}</div>
+                            </div>
+                          )}
+                          <span className="font-bold text-prada-charcoal text-[13px]">{p.label}</span>
                         </div>
-
-                        {/* Highlighted Likes */}
-                        <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-4 border border-prada-warm/20 flex items-center justify-between shadow-sm">
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-2 mb-1">
-                              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-prada-charcoal"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
-                              <span className="text-prada-charcoal font-bold text-base uppercase tracking-wider">{t('totalLikesLabel')}</span>
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {metrics.map((m, idx) => (
+                            <div key={idx} className={`flex flex-col items-center min-w-[56px] ${metrics.length === 4 ? 'w-[22%]' : 'w-[30%]'} overflow-hidden`}>
+                              <span className={m.color}>{m.icon}</span>
+                              <span className="text-[9px] uppercase font-bold text-prada-charcoal/50 mb-0.5 tracking-wider text-center whitespace-nowrap w-full truncate">{m.label}</span>
+                              <span className="text-[11px] sm:text-xs font-bold text-prada-charcoal tabular-nums w-full text-center truncate" title={m.value.toLocaleString()}>{m.value.toLocaleString()}</span>
                             </div>
-                            <span className="text-prada-taupe/60 text-[10px] sm:text-[11px] font-medium leading-tight">{t('totalLikesDesc')}</span>
-                          </div>
-                          <span className="text-xl sm:text-2xl font-bold text-prada-charcoal tracking-tight truncate max-w-[50%]" title={totalAll.likes.toLocaleString()}>{totalAll.likes.toLocaleString()}</span>
-                        </div>
-
-                        {/* Other Stats Grid */}
-                        <div className="grid grid-cols-2 gap-3">
-                          {/* Comments */}
-                          <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
-                            <div className="flex items-center justify-between mb-1.5 gap-2">
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('commentsLabel')}</span>
-                              </div>
-                              <span className="text-[13px] font-bold text-prada-charcoal truncate" title={totalAll.comments.toLocaleString()}>{totalAll.comments.toLocaleString()}</span>
-                            </div>
-                            <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('commentsDesc')}</span>
-                          </div>
-
-                          {/* Shares & Reposts */}
-                          <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
-                            <div className="flex items-center justify-between mb-1.5 gap-2">
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('sharesLabel')}</span>
-                              </div>
-                              <span className="text-[13px] font-bold text-prada-charcoal truncate" title={(totalAll.shares + totalAll.reposts).toLocaleString()}>{(totalAll.shares + totalAll.reposts).toLocaleString()}</span>
-                            </div>
-                            <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('sharesDesc')}</span>
-                          </div>
-
-                          {/* Saves */}
-                          <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
-                            <div className="flex items-center justify-between mb-1.5 gap-2">
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('savesLabel')}</span>
-                              </div>
-                              <span className="text-[13px] font-bold text-prada-charcoal truncate" title={totalAll.saves.toLocaleString()}>{totalAll.saves.toLocaleString()}</span>
-                            </div>
-                            <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('savesDesc')}</span>
-                          </div>
-
-                          {/* Views */}
-                          <div className="bg-white/80 backdrop-blur-md rounded-xl p-3 border border-prada-warm/30 flex flex-col hover:border-prada-warm/50 transition-colors shadow-sm">
-                            <div className="flex items-center justify-between mb-1.5 gap-2">
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="text-prada-charcoal font-bold text-xs uppercase tracking-wider">{t('viewsLabel')}</span>
-                              </div>
-                              <span className="text-[13px] font-bold text-prada-charcoal truncate" title={totalAll.views.toLocaleString()}>{totalAll.views.toLocaleString()}</span>
-                            </div>
-                            <span className="text-prada-taupe/40 text-[9.5px] font-medium leading-tight line-clamp-1">{t('viewsDesc')}</span>
-                          </div>
+                          ))}
                         </div>
                       </div>
-                    </div>
-                  );
-                })()}
-
-                {[
-                  { id: 'instagram', label: t('igLabel'), icon: <InstagramIcon />, color: 'from-rose-400 to-purple-500' },
-                  { id: 'tiktok', label: t('ttLabel'), icon: <TikTokIcon />, color: 'from-prada-charcoal to-prada-black' },
-                  { id: 'x', label: t('xLabel'), icon: <XIcon />, color: 'from-slate-700 to-slate-900' },
-                  { id: 'facebook', label: t('fbLabel'), icon: <FacebookIcon />, color: 'from-blue-500 to-blue-700' },
-                  { id: 'youtube', label: t('ytLabel'), icon: <YouTubeIcon />, color: 'from-red-500 to-red-700' },
-                ].map(p => {
-                  const stats = getPlatformStats(p.id === 'total' ? undefined : p.id);
-
-                  // Base Icons
-                  const likeIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>;
-                  const commentIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>;
-                  const shareIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z" /></svg>;
-                  const repostIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>;
-                  const viewIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>;
-                  const sendIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>;
-                  const saveIcon = <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 mb-1"><path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>;
-
-                  let metrics: { label: string, value: number, color: string, icon: any }[] = [];
-
-                  if (p.id === 'instagram') {
-                    metrics = [
-                      { label: t('likes'), value: stats.likes, color: 'text-rose-400', icon: likeIcon },
-                      { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
-                      { label: t('reposts'), value: stats.reposts, color: 'text-purple-400', icon: repostIcon },
-                      { label: t('sends'), value: stats.shares, color: 'text-indigo-400', icon: sendIcon },
-                      { label: t('view'), value: stats.views, color: 'text-emerald-500', icon: viewIcon },
-                    ];
-                  } else if (p.id === 'tiktok') {
-                    metrics = [
-                      { label: t('likes'), value: stats.likes, color: 'text-rose-400', icon: likeIcon },
-                      { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
-                      { label: t('saves'), value: stats.saves, color: 'text-amber-500', icon: saveIcon },
-                      { label: t('shares'), value: stats.shares, color: 'text-prada-charcoal/70', icon: shareIcon },
-                    ];
-                  } else if (p.id === 'x') {
-                    metrics = [
-                      { label: t('likes'), value: stats.likes, color: 'text-rose-400', icon: likeIcon },
-                      { label: t('replies'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
-                      { label: t('reposts'), value: stats.reposts, color: 'text-purple-400', icon: repostIcon },
-                    ];
-                  } else if (p.id === 'facebook') {
-                    metrics = [
-                      { label: t('likes'), value: stats.likes, color: 'text-blue-500', icon: likeIcon },
-                      { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
-                      { label: t('shares'), value: stats.shares, color: 'text-prada-charcoal/70', icon: shareIcon },
-                    ];
-                  } else if (p.id === 'youtube') {
-                    metrics = [
-                      { label: t('likes'), value: stats.likes, color: 'text-rose-500', icon: likeIcon },
-                      { label: t('comments'), value: stats.comments, color: 'text-blue-400', icon: commentIcon },
-                      { label: t('view'), value: stats.views, color: 'text-emerald-500', icon: viewIcon },
-                    ];
-                  }
-
-                  return (
-                    <div key={p.id} className="bg-white/80 backdrop-blur-md rounded-xl p-4 border border-prada-warm/30 shadow-sm flex flex-col gap-3">
-                      <div className="flex items-center gap-2 border-b border-prada-warm/50 pb-2">
-                        {p.icon && (
-                          <div className={`w-6 h-6 rounded-md bg-gradient-to-br ${p.color} flex items-center justify-center text-white shrink-0 shadow-sm`}>
-                            <div className="scale-75">{p.icon}</div>
-                          </div>
-                        )}
-                        <span className="font-bold text-prada-charcoal text-[13px]">{p.label}</span>
-                      </div>
-                      <div className="flex flex-wrap justify-center gap-2">
-                        {metrics.map((m, idx) => (
-                          <div key={idx} className={`flex flex-col items-center min-w-[56px] ${metrics.length === 4 ? 'w-[22%]' : 'w-[30%]'} overflow-hidden`}>
-                            <span className={m.color}>{m.icon}</span>
-                            <span className="text-[9px] uppercase font-bold text-prada-charcoal/50 mb-0.5 tracking-wider text-center whitespace-nowrap w-full truncate">{m.label}</span>
-                            <span className="text-[11px] sm:text-xs font-bold text-prada-charcoal tabular-nums w-full text-center truncate" title={m.value.toLocaleString()}>{m.value.toLocaleString()}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Platform-Specific Task Modal */}
-      {selectedTask && (() => {
-        const platform = selectedTask.platform;
-        const isFacebook = platform === 'facebook';
-        const hasHashtags = !!selectedTask.hashtags && !isFacebook;
-        const msgReady = msgPool1.length > 0 && msgPool2.length > 0 && emojiPool.length > 0;
+      {
+        selectedTask && (() => {
+          const platform = selectedTask.platform;
+          const isFacebook = platform === 'facebook';
+          const hasHashtags = !!selectedTask.hashtags && !isFacebook;
+          const activePool = msgPools[language] || msgPools.en;
+          const msgReady = activePool.p1.length > 0 && activePool.p2.length > 0 && emojiPool.length > 0;
 
-        // Per-platform usage tips
-        const tips: string[] = (() => {
-          if (platform === 'instagram') return [t('igTip1'), t('igTip2'), t('igTip3')];
-          if (platform === 'x') return [t('xTip1')];
-          if (platform === 'tiktok') return [t('ttTip1'), t('ttTip2')];
-          if (platform === 'youtube') return [t('ytTip1'), t('ytTip2')];
-          if (platform === 'facebook') return [t('fbTip1')];
-          return [];
-        })();
+          // Per-platform usage tips
+          const tips: string[] = (() => {
+            if (platform === 'instagram') return [t('igTip1'), t('igTip2'), t('igTip3')];
+            if (platform === 'x') return [t('xTip1')];
+            if (platform === 'tiktok') return [t('ttTip1'), t('ttTip2')];
+            if (platform === 'youtube') return [t('ytTip1'), t('ytTip2')];
+            if (platform === 'facebook') return [t('fbTip1')];
+            return [];
+          })();
 
-        return (
-          <div
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-            onClick={() => setSelectedTask(null)}
-          >
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-
+          return (
             <div
-              className="relative w-full max-w-md mx-3 mb-0 sm:mb-4 max-h-[92vh] flex flex-col"
-              onClick={e => e.stopPropagation()}
+              className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+              onClick={() => setSelectedTask(null)}
             >
-              <div className="bg-white rounded-t-3xl sm:rounded-3xl border border-gray-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-                {/* Handle bar */}
-                <div className="w-8 h-1 bg-gray-300 rounded-full mx-auto mt-2.5 mb-0 sm:hidden flex-shrink-0" />
+              <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
 
-                {/* Header */}
-                <div className="px-4 pt-3 pb-2.5 flex items-center justify-between flex-shrink-0 border-b border-gray-100">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${platformConfig[platform].color} flex items-center justify-center text-white flex-shrink-0 shadow-sm`}>
-                      {platformConfig[platform].icon}
+              <div
+                className="relative w-full max-w-md mx-3 mb-0 sm:mb-4 max-h-[92vh] flex flex-col"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="bg-white rounded-t-3xl sm:rounded-3xl border border-gray-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+                  {/* Handle bar */}
+                  <div className="w-8 h-1 bg-gray-300 rounded-full mx-auto mt-2.5 mb-0 sm:hidden flex-shrink-0" />
+
+                  {/* Header */}
+                  <div className="px-4 pt-3 pb-2.5 flex items-center justify-between flex-shrink-0 border-b border-gray-100">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${platformConfig[platform].color} flex items-center justify-center text-white flex-shrink-0 shadow-sm`}>
+                        {platformConfig[platform].icon}
+                      </div>
+                      <p className="text-sm font-semibold text-prada-charcoal truncate">{selectedTask.title || t('noTitle')}</p>
                     </div>
-                    <p className="text-sm font-semibold text-prada-charcoal truncate">{selectedTask.title || t('noTitle')}</p>
+                    <button
+                      onClick={() => setSelectedTask(null)}
+                      className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 text-sm transition-colors flex-shrink-0 ml-2"
+                    >
+                      ✕
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setSelectedTask(null)}
-                    className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 text-sm transition-colors flex-shrink-0 ml-2"
-                  >
-                    ✕
-                  </button>
-                </div>
 
-                {/* Scrollable body */}
-                <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
+                  {/* Scrollable body */}
+                  <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
 
-                  {/* ── SECTION 1: Hashtags (not shown for Facebook) ── */}
-                  {hasHashtags && (
+                    {/* ── SECTION 1: Hashtags (not shown for Facebook) ── */}
+                    {hasHashtags && (
+                      <div className="rounded-2xl border border-gray-200 overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100">
+                          <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">{t('sectionHashtags')}</span>
+                          <button
+                            onClick={() => handleCopyHashtags(selectedTask)}
+                            className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${copiedType === 'hashtags'
+                              ? 'bg-prada-red text-white'
+                              : 'bg-white border border-prada-red/30 text-prada-red hover:bg-prada-red/10'
+                              }`}
+                          >
+                            {copiedType === 'hashtags' ? t('copiedBtn') : t('copyTagsBtn')}
+                          </button>
+                        </div>
+                        <div className="px-3 py-2.5 max-h-28 overflow-y-auto">
+                          <p className="text-gray-700 text-xs whitespace-pre-wrap leading-relaxed">{selectedTask.hashtags}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── SECTION 2: Random Message ── */}
                     <div className="rounded-2xl border border-gray-200 overflow-hidden">
                       <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100">
-                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">{t('sectionHashtags')}</span>
-                        <button
-                          onClick={() => handleCopyHashtags(selectedTask)}
-                          className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${copiedType === 'hashtags'
-                            ? 'bg-prada-red text-white'
-                            : 'bg-white border border-prada-red/30 text-prada-red hover:bg-prada-red/10'
-                            }`}
-                        >
-                          {copiedType === 'hashtags' ? t('copiedBtn') : t('copyTagsBtn')}
-                        </button>
-                      </div>
-                      <div className="px-3 py-2.5 max-h-28 overflow-y-auto">
-                        <p className="text-gray-700 text-xs whitespace-pre-wrap leading-relaxed">{selectedTask.hashtags}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── SECTION 2: Random Message ── */}
-                  <div className="rounded-2xl border border-gray-200 overflow-hidden">
-                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100">
-                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">{t('sectionMessage')}</span>
-                      {generatedMessage && (
-                        <button
-                          onClick={handleCopyMessage}
-                          className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${copiedType === 'message'
-                            ? 'bg-prada-red text-white'
-                            : 'bg-white border border-prada-red/30 text-prada-red hover:bg-prada-red/10'
-                            }`}
-                        >
-                          {copiedType === 'message' ? t('copiedBtn') : t('copyMsgBtn')}
-                        </button>
-                      )}
-                    </div>
-                    <div className="px-3 py-2.5 space-y-2">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={generateRandomMessage}
-                          disabled={!msgReady}
-                          className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-all ${msgReady
-                            ? 'bg-prada-red hover:bg-prada-charcoal text-white shadow-sm'
-                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                            }`}
-                        >
-                          {t('generateCaption')}
-                        </button>
-                        {generatedMessage && msgReady && (
+                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">{t('sectionMessage')}</span>
+                        {generatedMessage && (
                           <button
-                            onClick={generateRandomMessage}
-                            className="px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium transition-colors"
+                            onClick={handleCopyMessage}
+                            className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${copiedType === 'message'
+                              ? 'bg-prada-red text-white'
+                              : 'bg-white border border-prada-red/30 text-prada-red hover:bg-prada-red/10'
+                              }`}
                           >
-                            {t('regenerate')}
+                            {copiedType === 'message' ? t('copiedBtn') : t('copyMsgBtn')}
                           </button>
                         )}
                       </div>
-                      {!msgReady && (
-                        <p className="text-gray-400 text-[10px]">{t('noPositiveMessages')}</p>
-                      )}
-                      {generatedMessage && (
-                        <p className="text-gray-800 text-xs p-2.5 bg-white rounded-xl border border-gray-200 leading-relaxed">{generatedMessage}</p>
-                      )}
+                      <div className="px-3 py-2.5 space-y-2">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={generateRandomMessage}
+                            disabled={!msgReady}
+                            className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-all ${msgReady
+                              ? 'bg-prada-red hover:bg-prada-charcoal text-white shadow-sm'
+                              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                              }`}
+                          >
+                            {t('generateCaption')}
+                          </button>
+                          {generatedMessage && msgReady && (
+                            <button
+                              onClick={generateRandomMessage}
+                              className="px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium transition-colors"
+                            >
+                              {t('regenerate')}
+                            </button>
+                          )}
+                        </div>
+                        {!msgReady && (
+                          <p className="text-gray-400 text-[10px]">{t('noPositiveMessages')}</p>
+                        )}
+                        {generatedMessage && (
+                          <p className="text-gray-800 text-xs p-2.5 bg-white rounded-xl border border-gray-200 leading-relaxed">{generatedMessage}</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* ── SECTION 3: Copy All (message + hashtags) — not shown for Facebook ── */}
-                  {!isFacebook && generatedMessage && hasHashtags && (
-                    <button
-                      onClick={() => handleCopyBoth(selectedTask)}
-                      className={`w-full py-2.5 rounded-2xl text-xs font-bold transition-all border ${copiedType === 'both'
-                        ? 'bg-prada-charcoal text-white border-prada-charcoal'
-                        : 'bg-prada-gold/15 hover:bg-prada-gold/25 text-prada-darkgold border-prada-gold/30'
-                        }`}
-                    >
-                      {copiedType === 'both' ? t('copiedBtn') : `${t('copyAllBtn')} — ${t('sectionMessage')} + ${t('sectionHashtags')}`}
-                    </button>
-                  )}
-
-                  {/* ── SECTION 4: Actions (Go to post + Mark done) ── */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleGoToPost(selectedTask)}
-                      className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r ${platformConfig[platform].color} hover:opacity-90 transition-opacity shadow-sm`}
-                    >
-                      {t('goPost')}
-                    </button>
-                    {isTaskCompleted(selectedTask) ? (
+                    {/* ── SECTION 3: Copy All (message + hashtags) — not shown for Facebook ── */}
+                    {!isFacebook && generatedMessage && hasHashtags && (
                       <button
-                        onClick={() => handleUnmarkComplete(selectedTask)}
-                        className="px-4 py-2.5 rounded-xl text-sm font-medium bg-green-50 hover:bg-green-100 text-green-600 transition-colors border border-green-200"
+                        onClick={() => handleCopyBoth(selectedTask)}
+                        className={`w-full py-2.5 rounded-2xl text-xs font-bold transition-all border ${copiedType === 'both'
+                          ? 'bg-prada-charcoal text-white border-prada-charcoal'
+                          : 'bg-prada-gold/15 hover:bg-prada-gold/25 text-prada-darkgold border-prada-gold/30'
+                          }`}
                       >
-                        {t('undoDoneBtn')}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleMarkComplete(selectedTask)}
-                        className="px-4 py-2.5 rounded-xl text-sm font-medium bg-gray-100 hover:bg-green-50 text-gray-600 hover:text-green-600 transition-colors border border-gray-200 hover:border-green-200"
-                      >
-                        {t('markDoneBtn')}
+                        {copiedType === 'both' ? t('copiedBtn') : `${t('copyAllBtn')} — ${t('sectionMessage')} + ${t('sectionHashtags')}`}
                       </button>
                     )}
-                  </div>
 
-                  {/* ── SECTION 5: Usage Tips ── */}
-                  {tips.length > 0 && (
-                    <div className="rounded-2xl border border-amber-100 bg-amber-50/60 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-amber-100">
-                        <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">{t('sectionTips')}</span>
-                      </div>
-                      <ul className="px-3 py-2.5 space-y-1.5 pb-3">
-                        {tips.map((tip, i) => (
-                          <li key={i} className="text-[12px] text-amber-800 leading-snug">{tip}</li>
-                        ))}
-                      </ul>
+                    {/* ── SECTION 4: Actions (Go to post + Mark done) ── */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleGoToPost(selectedTask)}
+                        className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r ${platformConfig[platform].color} hover:opacity-90 transition-opacity shadow-sm`}
+                      >
+                        {t('goPost')}
+                      </button>
+                      {isTaskCompleted(selectedTask) ? (
+                        <button
+                          onClick={() => handleUnmarkComplete(selectedTask)}
+                          className="px-4 py-2.5 rounded-xl text-sm font-medium bg-green-50 hover:bg-green-100 text-green-600 transition-colors border border-green-200"
+                        >
+                          {t('undoDoneBtn')}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleMarkComplete(selectedTask)}
+                          className="px-4 py-2.5 rounded-xl text-sm font-medium bg-gray-100 hover:bg-green-50 text-gray-600 hover:text-green-600 transition-colors border border-gray-200 hover:border-green-200"
+                        >
+                          {t('markDoneBtn')}
+                        </button>
+                      )}
                     </div>
-                  )}
 
-                  {/* Bottom padding for scroll */}
-                  <div className="h-1" />
+                    {/* ── SECTION 5: Usage Tips ── */}
+                    {tips.length > 0 && (
+                      <div className="rounded-2xl border border-amber-100 bg-amber-50/60 overflow-hidden">
+                        <div className="px-3 py-2 border-b border-amber-100">
+                          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">{t('sectionTips')}</span>
+                        </div>
+                        <ul className="px-3 py-2.5 space-y-1.5 pb-3">
+                          {tips.map((tip, i) => (
+                            <li key={i} className="text-[12px] text-amber-800 leading-snug">{tip}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Bottom padding for scroll */}
+                    <div className="h-1" />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()
+      }
 
 
       {/* Achievement Popup */}
@@ -1530,7 +1585,7 @@ function App() {
         onClick={() => setShowAchievement(true)}
         isUnlocked={achievementUnlocked}
       />
-    </div >
+    </div>
   );
 }
 
