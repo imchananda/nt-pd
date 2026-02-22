@@ -730,7 +730,7 @@ function App() {
                 </div>
 
                 <div className="mt-1">
-                  <span className="text-lg sm:text-xl font-display font-bold uppercase tracking-widest text-gray-800">
+                  <span className="text-2xl sm:text-3xl font-display font-bold tracking-widest text-gray-800">
                     Namtan Tipnaree
                   </span>
                 </div>
