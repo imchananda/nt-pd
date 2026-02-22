@@ -23,7 +23,7 @@ export default {
         }
       },
       fontFamily: {
-        display: ['"Cormorant Garamond"', '"Noto Sans Thai"', 'serif'],
+        display: ['"Poiret One"', '"Noto Sans Thai"', 'serif'],
         body: ['"Noto Sans Thai"', 'Inter', 'sans-serif'],
         sans: ['"Noto Sans Thai"', 'Inter', 'sans-serif'],
       },
