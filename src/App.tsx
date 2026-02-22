@@ -702,7 +702,7 @@ function App() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
-                  <h1 className="text-base sm:text-lg font-bold font-google text-prada-charcoal tracking-wide leading-snug">
+                  <h1 className="text-base sm:text-lg font-bold font-google text-prada-charcoal tracking-wide leading-none">
                     {t('appTitle')}
                   </h1>
 
@@ -729,8 +729,8 @@ function App() {
                   </div>
                 </div>
 
-                <div className="mt-1">
-                  <span className="text-2xl sm:text-3xl font-display font-bold tracking-widest text-gray-800">
+                <div className="-mt-1">
+                  <span className="text-2xl sm:text-3xl font-display font-bold tracking-widest text-gray-800 leading-none">
                     Namtan Tipnaree
                   </span>
                 </div>
