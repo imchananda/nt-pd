@@ -523,6 +523,17 @@ function App() {
     fetchPositiveMessages();
   }, [fetchAllData, fetchPositiveMessages]);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchAllData(true);
+        fetchPositiveMessages();
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(interval);
+  }, [fetchAllData, fetchPositiveMessages]);
+
   // Handle automatic scrolling top when Phase changes
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
