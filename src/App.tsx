@@ -174,26 +174,8 @@ function App() {
   // Ref for the main scrollable container
   const mainRef = useRef<HTMLElement>(null);
 
-  // Auto-detect phase based on current date
-  const getInitialPhase = () => {
-    const today = new Date();
-    const month = today.getMonth(); // 0 is Jan, 1 is Feb, 2 is Mar
-    const date = today.getDate();
-
-    if (month === 1) { // February
-      if (date >= 22 && date <= 23) return 'pre';
-      if (date >= 24 && date <= 25) return 'airport';
-      if (date === 26) return 'show';
-      if (date >= 27 && date <= 28) return 'aftermath'; // Feb 27-28
-    } else if (month === 2) { // March
-      if (date >= 1 && date <= 9) return 'aftermath';
-    }
-
-    return 'all'; // Default fallback if outside range
-  };
-
   // Phase and Stats State
-  const [activePhase, setActivePhase] = useState<'all' | 'pre' | 'airport' | 'show' | 'aftermath'>(getInitialPhase());
+  const [activePhase, setActivePhase] = useState<'all' | 'pre' | 'airport' | 'show' | 'aftermath'>('all');
   const [statsPeriod, setStatsPeriod] = useState<'emv' | 'miv'>('miv');
 
   const [visibleCount, setVisibleCount] = useState(30);
