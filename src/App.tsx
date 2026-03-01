@@ -852,7 +852,7 @@ function App() {
 
       {/* Background image anchored to the bottom middle with height constraints */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-0 pointer-events-none pb-0 sm:pb-4 flex justify-center items-end opacity-90 transition-opacity w-full overflow-hidden">
-        <img src="/nt-3.png" alt="" className="w-auto h-auto max-w-[95vw] sm:max-w-[70vw] max-h-[60vh] sm:max-h-[70vh] object-contain object-bottom" />
+        <img src="/nt-3.png" alt="" className="w-auto h-auto max-w-[95vw] sm:max-w-[70vw] max-h-[48vh] sm:max-h-[70vh] object-contain object-bottom" />
       </div>
 
       {/* Header Container (Fixed at top) */}
