@@ -480,15 +480,14 @@ function App() {
                 image: (() => {
                   const rawImg = getVal('image') || getVal('img') || getVal('picture') || '';
                   if (rawImg.includes('dropbox.com') || rawImg.includes('dropboxusercontent.com')) {
-                    // Convert any Dropbox share link to a direct image URL
-                    // Handles both old (/s/) and new (/scl/fi/) formats
-                    // Remove dl= (download flag) and st= (user session token, expires!)
-                    return rawImg
+                    // Convert Dropbox share link to direct URL, then route through proxy for CORS
+                    const directUrl = rawImg
                       .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
-                      .replace(/[?&]dl=\d/g, '')      // remove dl=0 or dl=1
-                      .replace(/[?&]st=[^&]*/g, '')   // remove st=xxxxx (session token)
-                      .replace(/\?$/, '')              // clean trailing ?
-                      .replace(/&$/, '');              // clean trailing &
+                      .replace(/[?&]dl=\d/g, '')
+                      .replace(/[?&]st=[^&]*/g, '')
+                      .replace(/\?$/, '')
+                      .replace(/&$/, '');
+                    return `/api/img?url=${encodeURIComponent(directUrl)}`;
                   }
                   const fileId = extractGDriveId(rawImg);
                   return fileId ? gdriveImageUrl(fileId) : rawImg;
