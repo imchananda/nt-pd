@@ -482,11 +482,13 @@ function App() {
                   if (rawImg.includes('dropbox.com') || rawImg.includes('dropboxusercontent.com')) {
                     // Convert any Dropbox share link to a direct image URL
                     // Handles both old (/s/) and new (/scl/fi/) formats
+                    // Remove dl= (download flag) and st= (user session token, expires!)
                     return rawImg
                       .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
-                      .replace(/[?&]dl=\d/g, '')   // remove dl=0 or dl=1
-                      .replace(/\?$/, '')           // clean trailing ?
-                      .replace(/&$/, '');           // clean trailing &
+                      .replace(/[?&]dl=\d/g, '')      // remove dl=0 or dl=1
+                      .replace(/[?&]st=[^&]*/g, '')   // remove st=xxxxx (session token)
+                      .replace(/\?$/, '')              // clean trailing ?
+                      .replace(/&$/, '');              // clean trailing &
                   }
                   const fileId = extractGDriveId(rawImg);
                   return fileId ? gdriveImageUrl(fileId) : rawImg;
