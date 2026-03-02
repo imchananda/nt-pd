@@ -1,11 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLanguage } from '../i18n/LanguageContext';
 
 const CREDITS_GID = '1046968352';
 
-interface CreditEntry {
-    nickname: string;
-}
+interface CreditEntry { nickname: string; }
 
 function parseCSVRow(line: string): string[] {
     const result: string[] = [];
@@ -13,14 +11,9 @@ function parseCSVRow(line: string): string[] {
     let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
         const ch = line[i];
-        if (ch === '"') {
-            inQuotes = !inQuotes;
-        } else if (ch === ',' && !inQuotes) {
-            result.push(current.trim());
-            current = '';
-        } else {
-            current += ch;
-        }
+        if (ch === '"') { inQuotes = !inQuotes; }
+        else if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
+        else { current += ch; }
     }
     result.push(current.trim());
     return result;
@@ -31,9 +24,7 @@ function parseCSVCredits(text: string): CreditEntry[] {
     if (lines.length < 2) return [];
     const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase());
     const nameIdx = (() => {
-        const idx = headers.findIndex(h =>
-            h.includes('nickname') || h.includes('name') || h.includes('ชื่อ')
-        );
+        const idx = headers.findIndex(h => h.includes('nickname') || h.includes('name') || h.includes('ชื่อ'));
         return idx >= 0 ? idx : 1;
     })();
     const entries: CreditEntry[] = [];
@@ -50,26 +41,39 @@ interface EndCreditsModalProps {
     onClose: () => void;
 }
 
-/* ── Stable star layers ── */
-const STARS_FAR = Array.from({ length: 120 }, (_, i) => ({
-    id: i,
-    left: `${(i * 1.618 * 11.3) % 100}%`,
-    top: `${(i * 1.618 * 7.7) % 100}%`,
-    size: 1,
-    opacity: 0.15 + (i % 6) * 0.07,
-    dur: `${3 + (i % 5)}s`,
-    delay: `${(i % 9) * 0.5}s`,
-}));
-
-const STARS_NEAR = Array.from({ length: 60 }, (_, i) => ({
-    id: i,
-    left: `${(i * 2.718 * 13.1) % 100}%`,
-    top: `${(i * 2.718 * 9.3) % 100}%`,
-    size: i % 5 === 0 ? 3 : 2,
-    opacity: 0.35 + (i % 4) * 0.12,
-    dur: `${2 + (i % 4)}s`,
-    delay: `${(i % 7) * 0.4}s`,
-}));
+/* ── Draw stars once onto a canvas — zero DOM nodes, zero ongoing CSS animations ── */
+function StarCanvas() {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const W = canvas.width = window.innerWidth;
+        const H = canvas.height = window.innerHeight;
+        ctx.clearRect(0, 0, W, H);
+        // Draw ~150 static stars in two sizes
+        for (let i = 0; i < 150; i++) {
+            const x = ((i * 1.618 * 397) % W);
+            const y = ((i * 1.618 * 217) % H);
+            const r = i % 12 === 0 ? 1.5 : i % 4 === 0 ? 1 : 0.6;
+            const alpha = 0.15 + (i % 7) * 0.08;
+            // Slight warm/cool tint variation
+            const hue = i % 5 === 0 ? 'rgba(255,235,180,' : i % 7 === 0 ? 'rgba(180,210,255,' : 'rgba(255,255,255,';
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = `${hue}${alpha})`;
+            ctx.fill();
+        }
+    }, []);
+    return (
+        <canvas
+            ref={canvasRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{ width: '100%', height: '100%' }}
+        />
+    );
+}
 
 export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProps) {
     const { language } = useLanguage();
@@ -94,7 +98,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
         if (isOpen) fetchCredits();
     }, [isOpen, fetchCredits]);
 
-    /* JS-driven scroll — reliable on iOS Safari */
+    /* JS-driven scroll — delta capped at 100ms to prevent freeze after tab backgrounding */
     useEffect(() => {
         if (!isOpen || loading) return;
         let el: HTMLElement | null = null;
@@ -104,7 +108,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
             let offset = 0;
             const startY = window.innerHeight;
             let rafId: number;
-            const speed = 90;
+            const speed = 80;
             let lastTime: number | null = null;
             let paused = false;
 
@@ -112,7 +116,6 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                 if (lastTime === null) {
                     lastTime = timestamp;
                 } else {
-                    // Cap delta to 100ms — prevents giant jump when tab is backgrounded/throttled
                     const delta = Math.min((timestamp - lastTime) / 1000, 0.1);
                     lastTime = timestamp;
                     if (!paused && el) {
@@ -125,22 +128,20 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                 rafId = requestAnimationFrame(step);
             };
 
-            // Reset lastTime when tab becomes visible again to avoid stale delta
-            const onVisibilityChange = () => {
-                if (document.visibilityState === 'visible') lastTime = null;
-            };
-
+            const onVisibility = () => { if (document.visibilityState === 'visible') lastTime = null; };
             const pause = () => { paused = true; };
             const resume = () => { paused = false; lastTime = null; };
+
             el.addEventListener('touchstart', pause, { passive: true });
             el.addEventListener('touchend', resume, { passive: true });
             el.addEventListener('mouseenter', pause);
             el.addEventListener('mouseleave', resume);
-            document.addEventListener('visibilitychange', onVisibilityChange);
+            document.addEventListener('visibilitychange', onVisibility);
             rafId = requestAnimationFrame(step);
+
             return () => {
                 cancelAnimationFrame(rafId);
-                document.removeEventListener('visibilitychange', onVisibilityChange);
+                document.removeEventListener('visibilitychange', onVisibility);
                 if (el) {
                     el.removeEventListener('touchstart', pause);
                     el.removeEventListener('touchend', resume);
@@ -167,10 +168,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
             {/* ── Hero title ── */}
             <div className="mb-24 text-center">
-                {/* Glow ring */}
                 <div className="relative inline-flex items-center justify-center mb-8">
-                    <div className="absolute w-32 h-32 rounded-full blur-3xl opacity-40"
-                        style={{ background: 'radial-gradient(circle, #B8986E 0%, transparent 70%)' }} />
                     <div className="relative font-bold select-none"
                         style={{
                             fontSize: '5rem',
@@ -183,7 +181,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                 </div>
 
                 <p className="text-xs uppercase tracking-[0.5em] mb-5 font-light"
-                    style={{ color: '#B8986E', letterSpacing: '0.5em' }}>
+                    style={{ color: '#B8986E' }}>
                     {language === 'th' ? 'นำเสนอโดย' : 'Presented by'}
                 </p>
 
@@ -223,20 +221,21 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
             {/* ── Thank you title ── */}
             <div className="text-center mb-16">
-                <p className="text-sm uppercase mb-4 font-light" style={{ color: 'rgba(255,255,255,0.5)', letterSpacing: '0.4em' }}>
+                <p className="text-xs uppercase mb-4 font-light" style={{ color: 'rgba(255,255,255,0.5)', letterSpacing: '0.4em' }}>
                     {language === 'th' ? 'ขอบคุณผู้สนับสนุนทุกท่าน' : 'With Deepest Gratitude To'}
                 </p>
-                <h2 className="font-bold mb-3" style={{
-                    fontSize: 'clamp(1.2rem, 4vw, 1.6rem)',
-                    letterSpacing: '0.3em',
-                    background: 'linear-gradient(135deg, #B8986E, #D4C8B8, #B8986E)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text',
-                }}>
+                <h2 className="font-bold mb-3"
+                    style={{
+                        fontSize: 'clamp(1.2rem, 4vw, 1.6rem)',
+                        letterSpacing: '0.3em',
+                        background: 'linear-gradient(135deg, #B8986E, #D4C8B8, #B8986E)',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundClip: 'text',
+                    }}>
                     MISSION SUPPORTERS
                 </h2>
-                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.6)', letterSpacing: '0.05em' }}>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.6)' }}>
                     {language === 'th' ? 'ผู้ที่ทำ Mission ครบทุกภารกิจ 💖' : 'Those who completed every mission 💖'}
                 </p>
             </div>
@@ -254,19 +253,14 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
             ) : (
                 <div className="flex flex-col items-center gap-10 w-full max-w-xs">
                     {entries.map((entry, idx) => (
-                        <div key={idx} className="text-center relative">
-                            {/* Subtle glow behind each name */}
-                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-8 blur-xl opacity-20 rounded-full"
-                                style={{ background: '#B8986E' }} />
-                            <p className="relative font-semibold tracking-widest drop-shadow-lg"
-                                style={{
-                                    fontSize: '1.1rem',
-                                    color: idx % 3 === 0 ? '#B8986E' : idx % 3 === 1 ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.7)',
-                                    letterSpacing: '0.1em',
-                                }}>
-                                {entry.nickname}
-                            </p>
-                        </div>
+                        <p key={idx} className="font-semibold tracking-widest text-center"
+                            style={{
+                                fontSize: '1.1rem',
+                                color: idx % 3 === 0 ? '#B8986E' : idx % 3 === 1 ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.7)',
+                                letterSpacing: '0.1em',
+                            }}>
+                            {entry.nickname}
+                        </p>
                     ))}
                 </div>
             )}
@@ -296,7 +290,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                         { text: 'Cảm ơn', big: true, gold: true },
                         { text: '사랑해', big: true, gold: false },
                     ].map(({ text, big, gold }, i) => (
-                        <span key={i} className="font-bold leading-tight drop-shadow-md"
+                        <span key={i} className="font-bold leading-tight"
                             style={{
                                 fontSize: big ? '1.5rem' : '0.9rem',
                                 color: gold ? '#B8986E' : 'rgba(255,255,255,0.85)',
@@ -306,10 +300,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                     ))}
                 </div>
 
-                <div className="mt-10 text-5xl drop-shadow-2xl"
-                    style={{ filter: 'drop-shadow(0 0 16px rgba(255,100,150,0.6))' }}>
-                    💖
-                </div>
+                <div className="mt-10 text-5xl">💖</div>
 
                 <div className="flex items-center gap-4 mt-10 w-48 mx-auto">
                     <div className="flex-1 h-px" style={{ background: 'linear-gradient(to right, transparent, #B8986E40)' }} />
@@ -324,89 +315,22 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
     return (
         <>
-            {/* Inject nebula keyframes */}
-            <style>{`
-                @keyframes nebula-pulse {
-                    0%, 100% { opacity: 0.06; transform: scale(1); }
-                    50%      { opacity: 0.12; transform: scale(1.08); }
-                }
-                @keyframes star-twinkle {
-                    0%, 100% { opacity: var(--op); }
-                    50%      { opacity: calc(var(--op) * 0.3); }
-                }
-            `}</style>
-
             <div
                 className="fixed inset-0 z-[120] flex flex-col overflow-hidden"
-                style={{ background: 'radial-gradient(ellipse at 50% 30%, #0a0520 0%, #020008 60%, #000 100%)' }}
+                style={{
+                    /* Deep space — pure CSS gradient, zero blur cost */
+                    background: 'radial-gradient(ellipse 120% 80% at 30% 20%, #180838 0%, #06020f 50%, #000 100%)',
+                }}
                 onClick={onClose}
             >
-                {/* ── Deep nebula glow blobs ── */}
-                <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                    <div className="absolute rounded-full blur-3xl"
-                        style={{
-                            width: '70vw', height: '60vw',
-                            top: '-10%', left: '-20%',
-                            background: 'radial-gradient(circle, rgba(80,40,180,0.5) 0%, transparent 70%)',
-                            animation: 'nebula-pulse 8s ease-in-out infinite',
-                        }} />
-                    <div className="absolute rounded-full blur-3xl"
-                        style={{
-                            width: '60vw', height: '50vw',
-                            top: '30%', right: '-20%',
-                            background: 'radial-gradient(circle, rgba(120,0,80,0.4) 0%, transparent 70%)',
-                            animation: 'nebula-pulse 11s ease-in-out infinite',
-                            animationDelay: '3s',
-                        }} />
-                    <div className="absolute rounded-full blur-3xl"
-                        style={{
-                            width: '50vw', height: '40vw',
-                            bottom: '10%', left: '20%',
-                            background: 'radial-gradient(circle, rgba(0,60,140,0.35) 0%, transparent 70%)',
-                            animation: 'nebula-pulse 9s ease-in-out infinite',
-                            animationDelay: '5s',
-                        }} />
-                </div>
-
-                {/* ── Far star layer (tiny, dim) ── */}
-                <div className="absolute inset-0 pointer-events-none">
-                    {STARS_FAR.map(s => (
-                        <div key={s.id} className="absolute rounded-full bg-white"
-                            style={{
-                                width: s.size,
-                                height: s.size,
-                                left: s.left,
-                                top: s.top,
-                                ['--op' as any]: s.opacity,
-                                opacity: s.opacity,
-                                animation: `star-twinkle ${s.dur} ease-in-out infinite ${s.delay}`,
-                            }} />
-                    ))}
-                </div>
-
-                {/* ── Near star layer (bigger, brighter) ── */}
-                <div className="absolute inset-0 pointer-events-none">
-                    {STARS_NEAR.map(s => (
-                        <div key={s.id} className="absolute rounded-full"
-                            style={{
-                                width: s.size,
-                                height: s.size,
-                                left: s.left,
-                                top: s.top,
-                                background: s.id % 8 === 0 ? '#ffeebb' : s.id % 5 === 0 ? '#bbddff' : 'white',
-                                ['--op' as any]: s.opacity,
-                                opacity: s.opacity,
-                                animation: `star-twinkle ${s.dur} ease-in-out infinite ${s.delay}`,
-                                boxShadow: s.size === 3 ? `0 0 4px 1px rgba(255,255,255,0.4)` : 'none',
-                            }} />
-                    ))}
-                </div>
+                {/* ── Static star canvas — drawn once, zero ongoing GPU cost ── */}
+                <StarCanvas />
 
                 {/* Top & bottom fade */}
                 <div className="absolute top-0 left-0 right-0 h-32 z-20 pointer-events-none"
-                    style={{ background: 'linear-gradient(to bottom, #020008, transparent)' }} />
+                    style={{ background: 'linear-gradient(to bottom, #000, transparent)' }} />
                 <div className="absolute bottom-0 left-0 right-0 h-32 z-20 pointer-events-none"
-                    style={{ background: 'linear-gradient(to top, #020008, transparent)' }} />
+                    style={{ background: 'linear-gradient(to top, #000, transparent)' }} />
 
                 {/* Close button */}
                 <button
@@ -416,10 +340,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                         background: 'rgba(255,255,255,0.06)',
                         border: '1px solid rgba(255,255,255,0.12)',
                         color: 'rgba(255,255,255,0.4)',
-                        backdropFilter: 'blur(8px)',
                     }}
-                    onMouseEnter={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.9)')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.4)')}
                 >
                     {language === 'th' ? 'ปิด ✕' : 'Close ✕'}
                 </button>
