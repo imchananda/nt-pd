@@ -100,8 +100,9 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
             if (!el) return;
 
             let offset = 0;
+            const startY = window.innerHeight; // start off-screen at the bottom
             let rafId: number;
-            const speed = 80; // px per second
+            const speed = 120; // px per second
             let lastTime: number | null = null;
             let paused = false;
 
@@ -112,9 +113,10 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
                 if (!paused && el) {
                     offset += speed * delta;
+                    // Loop: when we've scrolled past half the duplicated content
                     const half = el.scrollHeight / 2;
-                    if (half > 0 && offset >= half) offset -= half;
-                    el.style.transform = `translateY(-${offset}px) translateZ(0)`;
+                    if (half > 0 && offset >= half + startY) offset -= half;
+                    el.style.transform = `translateY(${startY - offset}px) translateZ(0)`;
                 }
 
                 rafId = requestAnimationFrame(step);
@@ -158,8 +160,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
     const creditsContent = (
         <div className="flex flex-col items-center px-6 w-full">
-            {/* Intro spacer */}
-            <div className="h-screen" />
+            {/* No intro spacer needed — starts from bottom of screen */}
 
             {/* Studio card */}
             <div className="mb-20 text-center">
@@ -212,9 +213,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
             <div className="mt-24 mb-12 text-center">
                 <div className="w-24 h-px bg-prada-gold/40 mx-auto mb-10" />
 
-                <p className="text-prada-gold/80 text-base uppercase tracking-[0.3em] mb-8 drop-shadow-sm">
-                    {language === 'th' ? 'ขอบคุณทุกคน' : 'Thank You All'}
-                </p>
+
 
                 {/* Typographic collage — words flow inline, alternating size & color */}
                 <div className="flex flex-wrap justify-center items-baseline gap-x-3 gap-y-3 px-4 max-w-xs mx-auto">
@@ -235,7 +234,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                         { text: 'Salamat', big: false, gold: false },
                         { text: 'Cảm ơn', big: true, gold: true },
                         { text: '사랑해', big: true, gold: false },
-                        { text: '💖', big: true, gold: false },
+
                     ].map(({ text, big, gold }, i) => (
                         <span
                             key={i}
@@ -301,7 +300,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
                 <div
                     id="end-credits-scroller"
                     className="flex flex-col items-center w-full will-change-transform"
-                    style={{ transform: 'translateY(0) translateZ(0)' }}
+                    style={{ transform: 'translateY(100vh) translateZ(0)' }}
                     onClick={e => e.stopPropagation()}
                 >
                     {creditsContent}
