@@ -257,3 +257,15 @@ body {
 
   animation-name: slideInRight;
 }
+
+/* ── End Credits scroll animation ── */
+/* Must live here (global), NOT inside JSX <style> tags.                    */
+/* In-JSX <style> accumulates on every mount/unmount cycle → iOS freeze.    */
+@keyframes credits-scroll {
+  0%   { transform: translateY(100vh); }
+  100% { transform: translateY(-50%); }
+}
+
+.end-credits-scroller {
+  animation: credits-scroll var(--credits-duration, 40s) linear infinite;
+}

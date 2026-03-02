@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLanguage } from '../i18n/LanguageContext';
 
 const CREDITS_GID = '1046968352';
@@ -211,17 +211,6 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
             style={{ background: 'radial-gradient(ellipse 120% 80% at 30% 20%, #180838 0%, #06020f 50%, #000 100%)' }}
             onClick={onClose}
         >
-            <style>{`
-                @keyframes credits-scroll {
-                    0%   { transform: translateY(100vh) translateZ(0); }
-                    100% { transform: translateY(-100%) translateZ(0); }
-                }
-                .scroller-container {
-                    animation: credits-scroll var(--duration) linear infinite;
-                    will-change: transform;
-                }
-                /* Pause on hover/touch not needed as user usually just watches or closes */
-            `}</style>
 
             <StarCanvas />
 
@@ -238,8 +227,8 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
             <div
                 ref={containerRef}
-                className="scroller-container flex flex-col items-center w-full"
-                style={{ '--duration': `${scrollDuration}s` } as any}
+                className="end-credits-scroller flex flex-col items-center w-full"
+                style={{ '--credits-duration': `${scrollDuration}s` } as any}
                 onClick={e => e.stopPropagation()}
             >
                 {creditsContent}
