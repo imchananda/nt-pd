@@ -107,27 +107,40 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
             const speed = 90;
             let lastTime: number | null = null;
             let paused = false;
+
             const step = (timestamp: number) => {
-                if (lastTime === null) lastTime = timestamp;
-                const delta = (timestamp - lastTime) / 1000;
-                lastTime = timestamp;
-                if (!paused && el) {
-                    offset += speed * delta;
-                    const half = el.scrollHeight / 2;
-                    if (half > 0 && offset >= half + startY) offset -= half;
-                    el.style.transform = `translateY(${startY - offset}px) translateZ(0)`;
+                if (lastTime === null) {
+                    lastTime = timestamp;
+                } else {
+                    // Cap delta to 100ms — prevents giant jump when tab is backgrounded/throttled
+                    const delta = Math.min((timestamp - lastTime) / 1000, 0.1);
+                    lastTime = timestamp;
+                    if (!paused && el) {
+                        offset += speed * delta;
+                        const half = el.scrollHeight / 2;
+                        if (half > 0 && offset >= half + startY) offset -= half;
+                        el.style.transform = `translateY(${startY - offset}px) translateZ(0)`;
+                    }
                 }
                 rafId = requestAnimationFrame(step);
             };
+
+            // Reset lastTime when tab becomes visible again to avoid stale delta
+            const onVisibilityChange = () => {
+                if (document.visibilityState === 'visible') lastTime = null;
+            };
+
             const pause = () => { paused = true; };
             const resume = () => { paused = false; lastTime = null; };
             el.addEventListener('touchstart', pause, { passive: true });
             el.addEventListener('touchend', resume, { passive: true });
             el.addEventListener('mouseenter', pause);
             el.addEventListener('mouseleave', resume);
+            document.addEventListener('visibilitychange', onVisibilityChange);
             rafId = requestAnimationFrame(step);
             return () => {
                 cancelAnimationFrame(rafId);
+                document.removeEventListener('visibilitychange', onVisibilityChange);
                 if (el) {
                     el.removeEventListener('touchstart', pause);
                     el.removeEventListener('touchend', resume);
