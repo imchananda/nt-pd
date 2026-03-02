@@ -101,7 +101,7 @@ export default function EndCreditsModal({ isOpen, onClose }: EndCreditsModalProp
 
             let offset = 0;
             let rafId: number;
-            const speed = 40; // px per second
+            const speed = 80; // px per second
             let lastTime: number | null = null;
             let paused = false;
 
