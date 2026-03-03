@@ -119,7 +119,6 @@ const platformConfig = {
 // ⚙️ SETTINGS - แก้ไขตรงนี้
 // ===========================================
 const SHEETS_CONFIG = [
-  { phase: 'pre', label: '22-23 Feb', gid: '1884793749' },
   { phase: 'airport', label: '24-25 Feb', gid: '0' },
   { phase: 'show', label: '26 Feb', gid: '879518091' },
   // aftermath = 2 sheets merged in UI (aftermath2 is internal-only for EMV exclusion)
@@ -270,23 +269,30 @@ function App() {
     return count;
   }, [completed, allTasks]);
 
-  // Auto-show Credits popup when all tasks are completed
+  // Focus tasks = tasks with focus >= 1 (focus badge or hot badge)
+  const allFocusTasks = useMemo(() => totalTasksList.filter(t => (t.focus ?? 0) >= 1), [totalTasksList]);
+  const allFocusTasksDone = useMemo(() => {
+    if (allFocusTasks.length === 0) return false;
+    return allFocusTasks.every(task => !!(completed[task.phase] && completed[task.phase][task.id]));
+  }, [allFocusTasks, completed]);
+
+  // Auto-show Credits popup when all focus/hot tasks are completed
   useEffect(() => {
     if (loading) return;
-    if (totalTasksList.length === 0) return;
-    if (totalCompletedCount !== totalTasksList.length) return;
+    if (allFocusTasks.length === 0) return;
+    if (!allFocusTasksDone) return;
     if (creditsSubmitted) return;
     // Small delay so the completion mark animation plays first
     const timer = setTimeout(() => setShowNameSubmit(true), 800);
     return () => clearTimeout(timer);
-  }, [totalCompletedCount, totalTasksList.length, creditsSubmitted, loading]);
+  }, [allFocusTasksDone, allFocusTasks.length, creditsSubmitted, loading]);
 
-  // Auto-close NameSubmitModal if user unchecks and is no longer at 100%
+  // Auto-close NameSubmitModal if user unchecks a focus task
   useEffect(() => {
-    if (showNameSubmit && totalTasksList.length > 0 && totalCompletedCount < totalTasksList.length) {
+    if (showNameSubmit && !allFocusTasksDone) {
       setShowNameSubmit(false);
     }
-  }, [totalCompletedCount, totalTasksList.length, showNameSubmit]);
+  }, [allFocusTasksDone, showNameSubmit]);
 
 
   // Calculate platform-specific engagement stats
@@ -2335,8 +2341,8 @@ function App() {
       }
 
 
-      {/* 🎬 Credits Floating Button — visible only when 100% complete */}
-      {totalTasksList.length > 0 && totalCompletedCount === totalTasksList.length && (
+      {/* 🎬 Credits Floating Button — visible only when all focus+hot tasks are done */}
+      {allFocusTasks.length > 0 && allFocusTasksDone && (
         <div className="fixed bottom-24 right-5 z-50">
           <div className="relative">
             {/* Glowing Ping Effect */}
