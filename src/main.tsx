@@ -5,6 +5,7 @@ import App from './App.tsx'
 import AdminCalculator from './pages/AdminCalculator.tsx'
 import { LanguageProvider } from './i18n/LanguageContext'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
+import PasswordGate from './components/PasswordGate.tsx'
 
 const ADMIN_HASH = '#/admin-prada-calc'
 
@@ -30,6 +31,8 @@ function Root() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Root />
+    <PasswordGate>
+      <Root />
+    </PasswordGate>
   </StrictMode>,
 )
