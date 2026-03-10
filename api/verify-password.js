@@ -1,10 +1,17 @@
-export default function handler(req, res) {
+export default async function handler(req, res) {
     // Only allow POST
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { password } = req.body;
+    // Parse body — Vercel usually auto-parses, but fallback just in case
+    let body = req.body;
+    if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch { body = {}; }
+    }
+    if (!body) body = {};
+
+    const { password } = body;
     const correctPassword = process.env.SITE_PASSWORD;
 
     if (!correctPassword) {
@@ -12,18 +19,10 @@ export default function handler(req, res) {
     }
 
     if (!password || password !== correctPassword) {
-        // Small delay to slow down brute-force attempts
-        setTimeout(() => {
-            res.status(401).json({ error: 'Incorrect password' });
-        }, 800);
-        return;
+        return res.status(401).json({ error: 'Incorrect password' });
     }
 
-    // Generate a simple session token (timestamp-based, validated by server if needed)
-    // For this use case, we trust the client to store it and present it
-    const token = Buffer.from(
-        `auth:${Date.now()}:${process.env.SITE_PASSWORD_SALT || 'ntf-prada'}`
-    ).toString('base64');
-
-    res.status(200).json({ token });
+    // Simple token — just a timestamp so the client can store it
+    const token = `ntf-${Date.now()}`;
+    return res.status(200).json({ token });
 }
