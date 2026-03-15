@@ -696,18 +696,32 @@ function DataQualityPanel({ allTasks }: { allTasks: SheetTask[] }) {
 
     const [mediaSearch, setMediaSearch] = useState('');
 
-    // Flat list: all (platform, outlet, count) sorted by count desc
-    const flatMediaList = mediaPlatformEntries.flatMap(([platform, outlets]) =>
-        Object.entries(outlets).map(([title, count]) => ({ platform, title, count }))
-    ).sort((a, b) => b.count - a.count);
+    // Outlet-first list: group by title across all platforms
+    // e.g. { title: "Vogue Thailand", platforms: [{platform:"instagram",count:3},{platform:"x",count:2}], total: 5 }
+    const outletList = (() => {
+        const byTitle: Record<string, { platform: string; count: number }[]> = {};
+        mediaPlatformEntries.forEach(([platform, outlets]) => {
+            Object.entries(outlets).forEach(([title, count]) => {
+                if (!byTitle[title]) byTitle[title] = [];
+                byTitle[title].push({ platform, count });
+            });
+        });
+        return Object.entries(byTitle)
+            .map(([title, platforms]) => ({
+                title,
+                platforms: platforms.sort((a, b) => b.count - a.count),
+                total: platforms.reduce((s, p) => s + p.count, 0),
+            }))
+            .sort((a, b) => b.total - a.total);
+    })();
 
     const searchTerm = mediaSearch.toLowerCase().trim();
-    const filteredFlatList = searchTerm
-        ? flatMediaList.filter(item =>
+    const filteredOutletList = searchTerm
+        ? outletList.filter(item =>
             item.title.toLowerCase().includes(searchTerm) ||
-            plPlain(item.platform).toLowerCase().includes(searchTerm)
+            item.platforms.some(p => plPlain(p.platform).toLowerCase().includes(searchTerm))
           )
-        : [];
+        : outletList;
 
     const exportMediaCSV = (targetPlatform?: string) => {
         const rows: string[][] = [['Platform', 'Media / Outlet', 'Posts']];
@@ -733,19 +747,6 @@ function DataQualityPanel({ allTasks }: { allTasks: SheetTask[] }) {
         a.download = `media_by_platform${suffix}.csv`;
         a.click();
         URL.revokeObjectURL(url);
-    };
-
-    const exportFlatMediaCSV = (list: { platform: string; title: string; count: number }[], suffix: string) => {
-        const rows: string[][] = [['Platform', 'Media / Outlet', 'Posts']];
-        list.forEach(item => rows.push([plPlain(item.platform), item.title, String(item.count)]));
-        const csv = rows.map(r => r.map(cell => `"${cell.replace(/"/g, '""')}`).join(',')).join('\r\n');
-        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-        const url2 = URL.createObjectURL(blob);
-        const a2 = document.createElement('a');
-        a2.href = url2;
-        a2.download = `media_flat${suffix}.csv`;
-        a2.click();
-        URL.revokeObjectURL(url2);
     };
 
     const [mediaViewMode, setMediaViewMode] = useState<'grouped' | 'flat'>('grouped');
@@ -830,33 +831,61 @@ function DataQualityPanel({ allTasks }: { allTasks: SheetTask[] }) {
                         <div className="flex items-center justify-between mb-2">
                             <span className="text-[10px] text-gray-500">
                                 {searchTerm
-                                    ? <>พบ <span className="text-amber-300 font-bold">{filteredFlatList.length}</span> สื่อ จาก {flatMediaList.length} ทั้งหมด</>
-                                    : <><span className="text-amber-300 font-bold">{flatMediaList.length}</span> สื่อ · รวมทุก Platform เรียงตามโพสต์</>
+                                    ? <>พบ <span className="text-amber-300 font-bold">{filteredOutletList.length}</span> สื่อ จาก {outletList.length} ทั้งหมด</>
+                                    : <><span className="text-amber-300 font-bold">{outletList.length}</span> สื่อ · รวมทุก Platform เรียงตามโพสต์</>
                                 }
                             </span>
                             <button
-                                onClick={() => exportFlatMediaCSV(searchTerm ? filteredFlatList : flatMediaList, searchTerm ? `_search` : `_all`)}
+                                onClick={() => {
+                                    const list = filteredOutletList;
+                                    const rows: string[][] = [['Media / Outlet', 'Platforms', 'Posts (per platform)', 'Total Posts']];
+                                    list.forEach(item => {
+                                        const platformStr = item.platforms.map(p => plPlain(p.platform)).join(', ');
+                                        const perPlatform = item.platforms.map(p => `${plPlain(p.platform)}:${p.count}`).join(' | ');
+                                        rows.push([item.title, platformStr, perPlatform, String(item.total)]);
+                                    });
+                                    const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}`).join(',')).join('\r\n');
+                                    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `media_combined${searchTerm ? '_filtered' : '_all'}.csv`;
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                }}
                                 className="flex items-center gap-1.5 text-[10px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 px-3 py-1.5 rounded-lg transition-all active:scale-95"
                             >
                                 ⬇️ Export CSV
                             </button>
                         </div>
-                        {/* Flat list */}
-                        <div className="space-y-1 max-h-[400px] overflow-y-auto pr-1">
-                            {(searchTerm ? filteredFlatList : flatMediaList).length === 0 ? (
+                        {/* Outlet list */}
+                        <div className="space-y-1 max-h-[480px] overflow-y-auto pr-1">
+                            {filteredOutletList.length === 0 ? (
                                 <div className="text-center py-8 text-gray-600 text-xs">ไม่พบสื่อที่ตรงกับ "{mediaSearch}"</div>
                             ) : (
-                                (searchTerm ? filteredFlatList : flatMediaList).map((item, i) => (
-                                    <div key={`${item.platform}-${item.title}-${i}`}
-                                        className="flex items-center gap-3 px-3 py-2 bg-gray-800/50 rounded-xl border border-gray-700/40 hover:border-amber-500/20 transition-colors">
-                                        <span className="text-[10px] bg-gray-700/60 text-gray-400 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">{pl(item.platform)}</span>
-                                        <span className="flex-1 text-[11px] text-gray-200 leading-tight">{item.title}</span>
-                                        <span className="text-[10px] font-bold text-amber-400 flex-shrink-0">{item.count} โพสต์</span>
+                                filteredOutletList.map((item) => (
+                                    <div key={item.title}
+                                        className="flex items-start gap-3 px-3 py-2.5 bg-gray-800/50 rounded-xl border border-gray-700/40 hover:border-amber-500/20 transition-colors">
+                                        {/* Outlet name */}
+                                        <span className="flex-1 text-[11px] text-gray-200 leading-snug font-medium min-w-0">{item.title}</span>
+                                        {/* Platform badges */}
+                                        <div className="flex flex-wrap gap-1 justify-end flex-shrink-0">
+                                            {item.platforms.map(p => (
+                                                <span key={p.platform}
+                                                    className="text-[9px] bg-gray-700/70 text-gray-300 border border-gray-600/50 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                                    {pl(p.platform)} <span className="text-amber-400 font-bold">{p.count}</span>
+                                                </span>
+                                            ))}
+                                            <span className="text-[10px] font-black text-amber-400 px-1.5 py-0.5 bg-amber-500/10 rounded-full border border-amber-500/25 whitespace-nowrap">
+                                                รวม {item.total}
+                                            </span>
+                                        </div>
                                     </div>
                                 ))
                             )}
                         </div>
                     </div>
+
                 ) : (
                     <div>
                         {/* Export all */}
